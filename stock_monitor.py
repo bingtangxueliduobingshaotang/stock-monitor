@@ -21,6 +21,7 @@ CFG = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
 TOKEN = os.environ.get("PUSHPLUS_TOKEN") or CFG.get("pushplus_token", "")
 POOL = CFG["pool"]
 STATE_FILE = os.path.join(BASE, "state", "last_alerts.json")
+BJ = datetime.timezone(datetime.timedelta(hours=8))
 
 
 # ---------------- 数据层 ----------------
@@ -79,7 +80,8 @@ def signals(bars):
     m5, m20, m60 = ma(c, 5, i), ma(c, 20, i), ma(c, 60, i)
     m5p, m20p, m60p = ma(c, 5, i - 1), ma(c, 20, i - 1), ma(c, 60, i - 1)
     vm5p = ma(v, 5, i - 1)
-    _t = datetime.datetime.now().hour * 60 + datetime.datetime.now().minute
+    _now = datetime.datetime.now(BJ)
+    _t = _now.hour * 60 + _now.minute
     _r = min(max((max(0, min(_t, 690) - 570) + max(0, min(_t, 900) - 780)) / 240.0, 0.05), 1.0)
     vr = (v[i] / vm5p / _r) if vm5p else 0
     if not (m5 and m20 and m60 and vm5p and m5p and m20p and m60p):
@@ -150,7 +152,7 @@ def push(title, content):
 
 
 def load_state():
-    today = datetime.date.today().isoformat()
+    today = datetime.datetime.now(BJ).date().isoformat()
     try:
         s = json.load(open(STATE_FILE, encoding="utf-8"))
         if s.get("date") == today:
@@ -212,7 +214,7 @@ def build_intraday(tag):
 
 def build_close():
     rt = realtime([i["code"] for i in POOL])
-    today = datetime.date.today().isoformat()
+    today = datetime.datetime.now(BJ).date().isoformat()
     lines = ["## 收盘复盘 + 明日预案（%s）" % today, "", "### 今日状态", ""]
     tomorrow = []
     for item in POOL:
@@ -284,14 +286,14 @@ def build_monitor():
     if not alerts:
         print("无新触发")
         return None
-    t = datetime.datetime.now().strftime("%H:%M")
+    t = datetime.datetime.now(BJ).strftime("%H:%M")
     return "## 触发告警 %s\n\n" % t + "\n\n".join(alerts)
 
 
 # ---------------- 入口 ----------------
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "intraday"
-    now = datetime.datetime.now().strftime("%m-%d %H:%M")
+    now = datetime.datetime.now(BJ).strftime("%m-%d %H:%M")
     if mode == "intraday":
         push("【策略池对策】" + now, build_intraday(now))
     elif mode == "close":
