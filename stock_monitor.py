@@ -79,6 +79,9 @@ def signals(bars):
     m5, m20, m60 = ma(c, 5, i), ma(c, 20, i), ma(c, 60, i)
     m5p, m20p, m60p = ma(c, 5, i - 1), ma(c, 20, i - 1), ma(c, 60, i - 1)
     vm5p = ma(v, 5, i - 1)
+    _t = datetime.datetime.now().hour * 60 + datetime.datetime.now().minute
+    _r = min(max((max(0, min(_t, 690) - 570) + max(0, min(_t, 900) - 780)) / 240.0, 0.05), 1.0)
+    vr = (v[i] / vm5p / _r) if vm5p else 0
     if not (m5 and m20 and m60 and vm5p and m5p and m20p and m60p):
         return None
     zf = c[i] / c[i - 1] - 1
@@ -94,9 +97,9 @@ def signals(bars):
     prev_b5 = sty > 0 and syy / sty >= 0.5 and l[i - 1] <= m20p * 1.02 and c[i - 1] >= c[i - 2] * 0.97
 
     hits = []
-    if zf >= 0.05 and v[i] >= 1.8 * vm5p and c[i - 1] <= m20p < c[i]:
+    if zf >= 0.05 and vr >= 1.8 and c[i - 1] <= m20p < c[i]:
         hits.append(("B1", "标志性大阳线（放量+5%站上20日线）"))
-    if c[i] > hh20p and v[i] >= 1.8 * vm5p:
+    if c[i] > hh20p and vr >= 1.8:
         hits.append(("B2", "放量真突破（破20日高+量比1.8）"))
     if c[i] > hh20p and c[i - 1] > max(h[i - 21:i - 1]):
         hits.append(("B3", "两天确认（连续站上20日高）"))
@@ -113,7 +116,7 @@ def signals(bars):
     if v[i] >= hv60 and st > 0 and sy2 / st >= 0.30 and zf < 0.03:
         hits.append(("S5", "天量见顶（60日天量+长上影+滞涨）"))
     return {"hits": hits, "kong": kong, "close": c[i], "m5": m5, "m20": m20, "m60": m60,
-            "zf": zf * 100, "date": bars[i][0]}
+            "zf": zf * 100, "vr": round(vr, 2), "date": bars[i][0]}
 
 
 def level_status(price, lv):
@@ -191,7 +194,7 @@ def build_intraday(tag):
             sg = None
         if sg:
             trend = "空头排列" if sg["kong"] else "非空头"
-            lines.append("  · 趋势：%s（MA5 %.3f / MA20 %.3f / MA60 %.3f）" % (trend, sg["m5"], sg["m20"], sg["m60"]))
+            lines.append("  · 趋势：%s（MA5 %.3f / MA20 %.3f / MA60 %.3f）｜ 量比 %.2f" % (trend, sg["m5"], sg["m20"], sg["m60"], sg.get("vr", 0)))
             if sg["hits"]:
                 for no, desc in sg["hits"]:
                     tag = "（空头排列中，只观察不执行）" if (no.startswith("B") and sg["kong"]) else ""
