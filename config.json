@@ -18,10 +18,11 @@
       ]
     },
     {
-      "code": "sz000425", "name": "徐工机械", "cost": 9.516, "shares": 3300,
+      "code": "sz000425", "name": "徐工机械", "cost": 9.516, "shares": 2200,
       "levels": [
-        {"type": "up", "price": 7.200, "desc": "反弹减1700股", "ref": "s1", "note": "前高与均线密集带"},
-        {"type": "down", "price": 6.970, "desc": "跌破清仓", "ref": "S1", "note": "9/29割肉潮最低价"}
+        {"type": "up", "price": 7.590, "desc": "缩量滞涨再减1100,放量站上转持有", "ref": "s1/B2", "note": "MA20=空头反弹天花板"},
+        {"type": "down", "price": 7.050, "desc": "跌破减1100股", "ref": "S1", "note": "本轮反弹起点"},
+        {"type": "down", "price": 6.970, "desc": "跌破全清2200股", "ref": "S1", "note": "9/29割肉潮最低价"}
       ]
     },
     {
@@ -39,8 +40,8 @@
     {
       "code": "sz002738", "name": "中矿资源（观察票）",
       "levels": [
-        {"type": "up", "price": 42.500, "desc": "放量站上=买点候选", "ref": "B2", "note": "需量比确认"},
-        {"type": "down", "price": 40.250, "desc": "跌破双底=证伪", "ref": "S1", "note": "不是买点"}
+        {"type": "up", "price": 40.250, "desc": "站回=假破位翻案,重新观察", "ref": "b13", "note": "10/12已跌破过"},
+        {"type": "up", "price": 42.500, "desc": "放量站上=买点候选", "ref": "B2", "note": "需量比确认"}
       ]
     }
   ]
