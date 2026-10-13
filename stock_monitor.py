@@ -176,6 +176,35 @@ def level_status(price, lv):
     return None, False
 
 
+def position_layers(sg, hits, level_broke, level_touch):
+    """建议仓位（0-10 层，10=满配）——若从零配置此刻的理想仓位。
+    基础：空头=0 / 中性=5 / 多头=7；破关键位或S类→降档；B类→+2；上破关键位→+1"""
+    if not sg:
+        return None, ""
+    m5, m20, m60 = sg["m5"], sg["m20"], sg["m60"]
+    if m5 > m20 > m60:
+        base, why = 7, "多头排列"
+    elif sg["kong"]:
+        base, why = 0, "空头排列"
+    else:
+        base, why = 5, "趋势中性"
+    sell = any(n.startswith("S") for n, _ in hits)
+    buy = any(n.startswith("B") for n, _ in hits)
+    if level_broke:
+        base = 0 if base <= 5 else base - 5
+        why += "·破关键位"
+    elif sell:
+        base = max(0, base - 5)
+        why += "·卖出信号"
+    if buy and not sg["kong"]:
+        base = min(10, base + 2)
+        why += "·买入信号"
+    if level_touch and base > 0:
+        base = min(10, base + 1)
+        why += "·上破关键位"
+    return base, why
+
+
 # ---------------- 推送层 ----------------
 def push(title, content):
     if not TOKEN:
@@ -235,6 +264,7 @@ def build_intraday(tag):
     rt = realtime([i["code"] for i in POOL])
     mk = market_line()
     lines = ["## 策略池中盘对策（%s）" % tag, ""] + ([mk, ""] if mk else [])
+    layer_rows = []
     for item in POOL:
         code = item["code"]
         r = rt.get(code)
@@ -261,21 +291,40 @@ def build_intraday(tag):
                         body.append("  · 🔴 <font color=\"red\">**%s**</font>" % txt)
             else:
                 body.append("  · 今日暂无 B/S 触发")
+        level_broke = level_touch = False
         if r:
             for lv in item.get("levels", []):
                 st, _ = level_status(r["price"], lv)
                 if st:
+                    if st == "跌破":
+                        level_broke = True
+                    if st == "触及":
+                        level_touch = True
                     txt = "【%s】%.3f %s（%s【%s】）" % (st, lv["price"], lv["desc"], lv.get("note", ""), lv.get("ref", ""))
                     if st in ("跌破", "触及"):
                         hot = True
                         body.append("  · 🔴 <font color=\"red\">**%s**</font>" % txt)
                     else:
                         body.append("  · %s" % txt)
+        if sg:
+            ly, why = position_layers(sg, sg["hits"], level_broke, level_touch)
+            if ly is not None:
+                body.append("  · **仓位：建议 %d/10 层**（%s）" % (ly, why))
+                layer_rows.append((item["name"], ly))
         nl = line_of(item, rt)
         lines.append("- 🔴 <font color=\"red\">%s</font>" % nl if hot else "- " + nl)
         lines.extend(body)
         lines.append("")
-    lines.append("> 详细规则见手册第一章（B/S 执行）+ 第二章（b/s 观察）")
+    cap, tot = CFG.get("cap_per_stock"), CFG.get("total_capital")
+    if cap and tot and layer_rows:
+        yuan = sum(ly for _, ly in layer_rows) / 10.0 * cap
+        lines.append("")
+        lines.append("**建议总仓位：约 %.1f 成**（%s）" % (
+            yuan / tot * 10, "、".join("%s %d/10" % (n, l) for n, l in layer_rows)))
+    if cap and tot:
+        lines.append("> 仓位口径：若从零配置的理想值（10层=满配，满配=%.1f万/票）；实际持仓按各票执行线处理" % (cap / 10000.0))
+    else:
+        lines.append("> 仓位口径：若从零配置的理想值；实际持仓按各票执行线处理")
     return "\n".join(lines)
 
 
@@ -285,6 +334,7 @@ def build_close():
     mk = market_line()
     lines = ["## 收盘复盘 + 明日预案（%s）" % today, ""] + ([mk, ""] if mk else []) + ["### 今日状态", ""]
     tomorrow = []
+    layer_rows = []
     for item in POOL:
         code = item["code"]
         r = rt.get(code)
@@ -309,6 +359,19 @@ def build_close():
                     body.append("  · %s" % hot_txt)
             else:
                 body.append("  · 无 B/S 触发")
+        level_broke = level_touch = False
+        if r:
+            for lv in item.get("levels", []):
+                st, _ = level_status(r["price"], lv)
+                if st == "跌破":
+                    level_broke = True
+                if st == "触及":
+                    level_touch = True
+        if sg:
+            ly, why = position_layers(sg, sg["hits"], level_broke, level_touch)
+            if ly is not None:
+                body.append("  · **仓位：建议 %d/10 层**（%s）" % (ly, why))
+                layer_rows.append((item["name"], ly))
         nl = line_of(item, rt)
         lines.append("- 🔴 <font color=\"red\">%s</font>" % nl if hot else "- " + nl)
         lines.extend(body)
@@ -316,11 +379,19 @@ def build_close():
         for lv in item.get("levels", []):
             arrow = "上破" if lv["type"] == "up" else "跌破"
             tomorrow.append("- **%s**：%s %.3f → %s【%s】" % (item["name"], arrow, lv["price"], lv["desc"], lv.get("ref", "")))
+    cap, tot = CFG.get("cap_per_stock"), CFG.get("total_capital")
+    if cap and tot and layer_rows:
+        yuan = sum(ly for _, ly in layer_rows) / 10.0 * cap
+        lines.append("")
+        lines.append("**建议总仓位：约 %.1f 成**（%s）" % (
+            yuan / tot * 10, "、".join("%s %d/10" % (n, l) for n, l in layer_rows)))
     lines.append("### 明日盯防（挂条件单/预警）")
     lines.extend(tomorrow)
     lines.append("")
     lines.append(pick_line())
     lines.append("")
+    if cap and tot:
+        lines.append("> 仓位口径：若从零配置的理想值（10层=满配，满配=%.1f万/票）；实际持仓按各票执行线处理" % (cap / 10000.0))
     lines.append("> 盘中触发买/卖信号会自动推送告警")
     return "\n".join(lines)
 
