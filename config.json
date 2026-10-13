@@ -1,9 +1,10 @@
 {
   "pushplus_token": "",
   "_说明": "策略池配置——改这里就能改监控的股票。cost=成本价（不填则不显示浮盈亏），levels=关键位（up=上方目标/减仓位，down=下方止损/清仓位），改完保存即生效。",
+  "_仓位规则": "本文件不记股数：动作一律用比例（全清/减半/减1/3），你实际买卖多少股都不影响推送。cost 仅在加仓摊薄成本时更新。",
   "pool": [
     {
-      "code": "sh520700", "name": "创新药ETF", "cost": 1.660, "shares": 6000,
+      "code": "sh520700", "name": "创新药ETF", "cost": 1.660,
       "levels": [
         {"type": "up", "price": 1.838, "desc": "触及减1/3", "ref": "s1", "note": "52周高=历史套牢区"},
         {"type": "down", "price": 1.640, "desc": "收盘跌破减半", "ref": "S1", "note": "二浪箱体下沿"},
@@ -11,24 +12,24 @@
       ]
     },
     {
-      "code": "sz159516", "name": "半导体设备ETF", "cost": 0.718, "shares": 10000,
+      "code": "sz159516", "name": "半导体设备ETF", "cost": 0.718,
       "levels": [
-        {"type": "up", "price": 0.700, "desc": "反弹减3000股", "ref": "s1", "note": "MA20+8月平台下沿"},
+        {"type": "up", "price": 0.700, "desc": "反弹减1/3", "ref": "s1", "note": "MA20+8月平台下沿"},
         {"type": "down", "price": 0.630, "desc": "收盘跌破全清", "ref": "S1", "note": "低点抬高结构线"}
       ]
     },
     {
-      "code": "sz000425", "name": "徐工机械", "cost": 9.516, "shares": 2200,
+      "code": "sz000425", "name": "徐工机械", "cost": 9.516,
       "levels": [
-        {"type": "up", "price": 7.590, "desc": "缩量滞涨再减1100,放量站上转持有", "ref": "s1/B2", "note": "MA20=空头反弹天花板"},
-        {"type": "down", "price": 7.050, "desc": "跌破减1100股", "ref": "S1", "note": "本轮反弹起点"},
-        {"type": "down", "price": 6.970, "desc": "跌破全清2200股", "ref": "S1", "note": "9/29割肉潮最低价"}
+        {"type": "up", "price": 7.590, "desc": "缩量滞涨再减半,放量站上转持有", "ref": "s1/B2", "note": "MA20=空头反弹天花板"},
+        {"type": "down", "price": 7.050, "desc": "跌破减半", "ref": "S1", "note": "本轮反弹起点"},
+        {"type": "down", "price": 6.970, "desc": "跌破全清", "ref": "S1", "note": "9/29割肉潮最低价"}
       ]
     },
     {
-      "code": "sh600469", "name": "风神股份", "cost": 6.401, "shares": 4200,
+      "code": "sh600469", "name": "风神股份", "cost": 6.401,
       "levels": [
-        {"type": "up", "price": 5.000, "desc": "反弹减2000股", "ref": "s2", "note": "前低+平台下沿"},
+        {"type": "up", "price": 5.000, "desc": "反弹减半", "ref": "s2", "note": "前低+平台下沿"},
         {"type": "up", "price": 5.300, "desc": "放量站上才谈持有", "ref": "B2", "note": "需量比1.8确认"},
         {"type": "down", "price": 4.870, "desc": "跌破全清", "ref": "S1", "note": "本轮最低"}
       ]
