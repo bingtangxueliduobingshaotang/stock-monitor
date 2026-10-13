@@ -74,6 +74,19 @@ def is_trading_day():
         return True
 
 
+def in_window(mode, t=None):
+    """有效时段守卫（北京时间）：防止 GitHub 延迟触发的班次在盘后乱推（误导性信号）。
+    intraday/monitor: 9:25-11:35 或 12:55-15:05；close: 15:00-23:59；其余一律静默。"""
+    if t is None:
+        _n = datetime.datetime.now(BJ)
+        t = _n.hour * 100 + _n.minute
+    if mode in ("intraday", "monitor"):
+        return (925 <= t <= 1135) or (1255 <= t <= 1505)
+    if mode == "close":
+        return 1500 <= t <= 2359
+    return True
+
+
 def market_line():
     """大盘概况一行"""
     try:
@@ -473,9 +486,14 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "intraday"
     now = datetime.datetime.now(BJ).strftime("%m-%d %H:%M")
     FORCE = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    EXT = os.environ.get("EXT_GUARD") == "on"   # 外部定时器触发：需过守卫
+    MANUAL = FORCE and not EXT                  # 人工手动点按钮：免守卫（方便测试）
     try:
-        if not FORCE and not is_trading_day():
+        if not MANUAL and not is_trading_day():
             print("[%s] 今日休市（行情时间戳不是今天），静默退出" % now)
+            sys.exit(0)
+        if not MANUAL and not in_window(mode):
+            print("[%s] 非有效时段，静默退出防误报（mode=%s）" % (now, mode))
             sys.exit(0)
         if mode == "intraday":
             push("【策略池对策】" + now, build_intraday(now))
