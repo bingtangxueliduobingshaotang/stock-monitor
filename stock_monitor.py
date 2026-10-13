@@ -485,14 +485,11 @@ def build_monitor():
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "intraday"
     now = datetime.datetime.now(BJ).strftime("%m-%d %H:%M")
-    FORCE = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    EXT = os.environ.get("EXT_GUARD") == "on"   # 外部定时器触发：需过守卫
-    MANUAL = FORCE and not EXT                  # 人工手动点按钮：免守卫（方便测试）
     try:
-        if not MANUAL and not is_trading_day():
+        if not is_trading_day():
             print("[%s] 今日休市（行情时间戳不是今天），静默退出" % now)
             sys.exit(0)
-        if not MANUAL and not in_window(mode):
+        if not in_window(mode):
             print("[%s] 非有效时段，静默退出防误报（mode=%s）" % (now, mode))
             sys.exit(0)
         if mode == "intraday":
