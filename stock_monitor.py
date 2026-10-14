@@ -408,31 +408,91 @@ def build_close():
 
 # ---------------- 今日荐股（仅 close 模式调用） ----------------
 def _snapshot():
-    """东财全市场快照（沪深主板+创业板+科创板，剔除北交所）"""
+    """全市场快照：东财为主，自动降级新浪涨幅榜（统一结构 f12/f14/f3/f10/f24/f26）"""
+    try:
+        rows = []
+        for pn in range(1, 13):
+            url = ("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=500&po=1&np=1&fltt=2&invt=2"
+                   "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+                   "&fields=f12,f14,f2,f3,f10,f24,f26" % pn)
+            d = json.loads(http_get(url))
+            diff = (d.get("data") or {}).get("diff") or []
+            if not diff:
+                break
+            rows += diff
+        if len(rows) > 800:
+            return rows
+    except Exception:
+        pass
     rows = []
-    for pn in range(1, 13):
-        url = ("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=500&po=1&np=1&fltt=2&invt=2"
-               "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
-               "&fields=f12,f14,f2,f3,f10,f24,f26" % pn)
-        d = json.loads(http_get(url))
-        diff = (d.get("data") or {}).get("diff") or []
-        if not diff:
+    for page in (1, 2):
+        url = ("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+               "Market_Center.getHQNodeData?page=%d&num=80&sort=changepercent&asc=0&node=hs_a" % page)
+        try:
+            arr = json.loads(http_get(url))
+        except Exception:
             break
-        rows += diff
+        if not isinstance(arr, list):
+            break
+        for it in arr:
+            code = str(it.get("code", ""))
+            if not code or len(code) != 6:
+                continue
+            try:
+                chg = float(it.get("changepercent"))
+            except Exception:
+                continue
+            rows.append({"f12": code, "f14": str(it.get("name", "")), "f3": chg,
+                         "f10": None, "f24": None, "f26": ""})
     return rows
 
 
+def _fallback_watch(rows):
+    """兜底观察票：快照里挑最有动能的一只（涨 2.5-9.5%、尽量非高位），补拉 K 线拿价格"""
+    best = None
+    for it in rows:
+        name = str(it.get("f14", ""))
+        code = str(it.get("f12", ""))
+        if not code or "ST" in name or "退" in name:
+            continue
+        try:
+            chg = float(it.get("f3"))
+        except Exception:
+            continue
+        if not (2.5 <= chg <= 9.5):
+            continue
+        dd60 = it.get("f24")
+        if isinstance(dd60, (int, float)) and dd60 > -5:
+            continue
+        sc = chg + (min(6.0, -dd60 / 8.0) if isinstance(dd60, (int, float)) else 0)
+        if not best or sc > best["_sc"]:
+            best = {"code": ("sh" if code.startswith(("6", "5")) else "sz") + code,
+                    "name": name, "chg": chg, "level": "观察", "_sc": sc,
+                    "score": int(40 + sc), "typ": "动能观察", "vr": 0, "close": None,
+                    "why": ["全市场动能扫描（暂未出体系买点，列入观察）"]}
+    if best and best.get("close") is None:
+        try:
+            bars = kline(best["code"], 140)
+            sg = signals(bars)
+            if sg:
+                best["close"] = sg["close"]
+                best["stop"] = bars[-1][4]
+                best["target"] = max(b[3] for b in bars[-120:])
+        except Exception:
+            pass
+    return best
+
+
 def pick_stock():
-    """全市场扫描 -> 体系最完美的票；剔除 ST/新股/空头信号；返回 dict 或 None"""
+    """全市场扫描 -> 分级返回：主推（B类+非空头）/ 备选（空头B类或逼近型）/ 观察（兜底）"""
     try:
         rows = _snapshot()
     except Exception:
-        return None
+        rows = []
     if not rows:
         return None
     now = datetime.datetime.now(BJ)
     cand = []
-    seen = set()
     for it in rows:
         name = str(it.get("f14", ""))
         code = str(it.get("f12", ""))
@@ -446,77 +506,113 @@ def pick_stock():
             except Exception:
                 pass
         try:
-            chg = float(it.get("f3")); vr = float(it.get("f10"))
+            chg = float(it.get("f3"))
         except Exception:
             continue
+        vr = it.get("f10")
         dd60 = it.get("f24")
-        if chg >= 5 and vr >= 1.8:
-            cand.append(("强势突破", code, name, chg, vr))
-        elif isinstance(dd60, (int, float)) and dd60 <= -30 and vr <= 0.8 and chg > 0:
-            cand.append(("超跌反转", code, name, chg, vr))
-    strong = [c for c in cand if c[0] == "强势突破"][:25]
-    low = [c for c in cand if c[0] == "超跌反转"][:25]
-    best = None
-    for typ, code, name, chg, vr in strong + low:
-        if code in seen:
-            continue
-        seen.add(code)
+        try:
+            vrf = float(vr) if vr is not None else None
+        except Exception:
+            vrf = None
+        if chg >= 5 and (vrf is None or vrf >= 1.8):
+            cand.append(("强势突破", code, name, chg))
+        elif vrf is not None and isinstance(dd60, (int, float)) and dd60 <= -30 and vrf <= 0.8 and chg > 0:
+            cand.append(("超跌反转", code, name, chg))
+    strong = [c for c in cand if c[0] == "强势突破"][:40]
+    low = [c for c in cand if c[0] == "超跌反转"][:40]
+    best1 = best2 = None
+    for typ, code, name, chg in strong + low:
         tcode = ("sh" if code.startswith(("6", "5")) else "sz") + code
         try:
             bars = kline(tcode, 140)
             sg = signals(bars)
         except Exception:
             continue
-        if not sg or not sg["hits"]:
+        if not sg:
             continue
-        real = [(n, d) for n, d in sg["hits"] if not (n.startswith("B") and sg["kong"])]
-        if not real:
-            continue
-        score = max({"B1": 35, "B2": 40, "B3": 30, "B4": 35}.get(n, 20) for n, d in real)
-        why = ["、".join("【%s %s】" % (n, d) for n, d in real)]
-        if sg["m5"] > sg["m20"] > sg["m60"]:
-            score += 25; why.append("多头排列")
-        else:
-            score += 12; why.append("非空头")
-        v2 = sg.get("vr", 0)
-        if 1.8 <= v2 <= 3:
-            score += 20; why.append("量比%.2f 黄金区间" % v2)
-        elif 3 < v2 <= 5:
-            score += 12; why.append("量比%.2f 偏大" % v2)
-        elif v2 > 5:
-            score += 5; why.append("量比%.2f 过大" % v2)
-        elif v2 >= 1.2:
-            score += 8; why.append("量比%.2f" % v2)
+        hits = sg["hits"]
+        real = [(n, d) for n, d in hits if not (n.startswith("B") and sg["kong"])]
+        v = [b[5] for b in bars]
+        vr_k = 0
+        try:
+            vr_k = v[-1] / (sum(v[-6:-1]) / 5.0)
+        except Exception:
+            pass
         hh = max(b[3] for b in bars[-120:])
         dd = (hh - sg["close"]) / hh
-        if 0.15 <= dd <= 0.45:
-            score += 15; why.append("位置健康(距高点-%.0f%%)" % (dd * 100))
-        elif dd > 0.45:
-            score += 10; why.append("深跌位(距高点-%.0f%%)" % (dd * 100))
-        else:
-            score += 4; why.append("高位(距高点-%.0f%%)" % (dd * 100))
-        score = min(score, 100)
-        if not best or score > best["score"]:
-            best = {"code": tcode, "name": name, "score": score, "why": why,
-                    "close": sg["close"], "stop": bars[-1][4], "target": hh,
-                    "typ": typ, "chg": chg, "vr": v2}
-    return best
+
+        def _score(real_hits, kong, vr_k, dd):
+            s = max({"B1": 35, "B2": 40, "B3": 30, "B4": 35}.get(n, 20) for n, d in real_hits) if real_hits else 0
+            why = ["、".join("【%s %s】" % (n, d) for n, d in real_hits)] if real_hits else []
+            if sg["m5"] > sg["m20"] > sg["m60"]:
+                s += 25; why.append("多头排列")
+            elif not kong:
+                s += 12; why.append("非空头")
+            else:
+                s += 4; why.append("空头(仅观察)")
+            if 1.8 <= vr_k <= 3:
+                s += 20; why.append("量比%.2f 黄金区间" % vr_k)
+            elif 3 < vr_k <= 5:
+                s += 12; why.append("量比%.2f" % vr_k)
+            elif vr_k >= 1.2:
+                s += 8; why.append("量比%.2f" % vr_k)
+            elif vr_k > 0:
+                why.append("量比%.2f" % vr_k)
+            if 0.15 <= dd <= 0.45:
+                s += 15; why.append("位置健康(距高点-%.0f%%)" % (dd * 100))
+            elif dd > 0.45:
+                s += 10; why.append("深跌位(距高点-%.0f%%)" % (dd * 100))
+            else:
+                s += 4; why.append("高位(距高点-%.0f%%)" % (dd * 100))
+            return min(s, 100), why
+
+        item = {"code": tcode, "name": name, "close": sg["close"], "stop": bars[-1][4],
+                "target": hh, "typ": typ, "chg": chg, "vr": round(vr_k, 2)}
+        if real:
+            sc, why = _score(real, sg["kong"], vr_k, dd)
+            if not sg["kong"] and (not best1 or sc > best1["score"]):
+                best1 = dict(item, score=sc, why=why, level="主推")
+        lvl2 = (hits and sg["kong"]) or (chg >= 4 and vr_k >= 1.5 and dd <= 0.06 and not sg["kong"])
+        if lvl2:
+            sc, why = _score(real, sg["kong"], vr_k, dd)
+            sc = int(sc * 0.8) if real else min(sc, 62)
+            if not best2 or sc > best2["score"]:
+                best2 = dict(item, score=sc, why=why, level="备选")
+    if best1:
+        return best1
+    if best2:
+        return best2
+    return _fallback_watch(rows)
 
 
 def pick_line():
     b = pick_stock()
     if not b:
-        return "**⭐ 今日荐股**：全市场没有符合体系的标的（宁缺毋滥，空仓也是操作）"
-    return ("**⭐ 今日荐股：%s（%s）｜ 评分 %d/100**\n"
-            "- 类型：%s ｜ 今日 %+.1f%%，量比 %.2f\n"
-            "- 理由：%s\n"
-            "- 预测：守住 %.3f 看震荡上行，上方压力 %.3f；跌破 %.3f = 逻辑破，离场\n"
-            "- 应对：回踩 %.3f 不破可轻仓试；止损 %.3f；到 %.3f 附近减半\n"
-            "- 仅供次日参考，系统不跟踪" % (
-                b["name"], b["code"], b["score"], b["typ"], b["chg"], b["vr"],
-                "；".join(b["why"]),
-                b["stop"], b["target"], b["stop"],
-                b["close"] * 0.985, b["stop"], b["target"]))
+        return "**⭐ 今日荐股**：全市场扫描失败（数据源异常），明天再看"
+    lv = b.get("level", "主推")
+    if lv == "主推":
+        head = "**⭐ 今日荐股：%s（%s）｜ 评分 %d/100**" % (b["name"], b["code"], b["score"])
+        tail = "- 仅供次日参考，系统不跟踪"
+    elif lv == "备选":
+        head = "**⭐ 今日看点【备选】：%s（%s）｜ 评分 %d/100**" % (b["name"], b["code"], b["score"])
+        tail = ("- 说明：今日市场偏弱，暂无满分标的——此为相对最优，尚未完全触发买点，只做关注\n"
+                "- 仅供次日参考，系统不跟踪")
+    else:
+        head = "**⭐ 今日看点【观察】：%s（%s）｜ 动能分 %d**" % (b["name"], b["code"], b["score"])
+        tail = ("- 说明：暂未出体系买点，先放观察池——等放量突破/底分型出现再动手\n"
+                "- 仅供次日参考，系统不跟踪")
+    lines = [head, "- 类型：%s ｜ 今日 %+.1f%%" % (b["typ"], b["chg"])]
+    if b.get("vr"):
+        lines[1] += "，量比 %.2f" % b["vr"]
+    lines.append("- 理由：%s" % "；".join(b["why"]))
+    if b.get("close") and b.get("stop") and b.get("target"):
+        lines.append("- 预测：守住 %.3f 看震荡上行，上方压力 %.3f；跌破 %.3f = 逻辑破，离场" % (
+            b["stop"], b["target"], b["stop"]))
+        lines.append("- 应对：回踩 %.3f 不破可轻仓试；止损 %.3f；到 %.3f 附近减半" % (
+            b["close"] * 0.985, b["stop"], b["target"]))
+    lines.append(tail)
+    return "\n".join(lines)
 
 
 def build_monitor():
