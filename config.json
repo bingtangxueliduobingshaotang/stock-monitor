@@ -4,7 +4,7 @@
   "_仓位规则": "本文件不记股数：动作一律用比例（全清/减半/减1/3），你实际买卖多少股都不影响推送。cost 仅在加仓摊薄成本时更新。",
   "cap_per_stock": 20000,
   "total_capital": 80000,
-  "_仓位口径": "cap_per_stock=单票满配金额（10层=满配，从零配置的理想口径）；total_capital=当前总盘子（算总仓位用）。未来规划 6万/≤3只 → 到时改这两个数即可。",
+  "_仓位口径": "cap_per_stock=单票满配金额（10层=满配）；total_capital=当前总盘子。skip_pos=true 的票不参与仓位显示（证券账户/观察票）。目标仓位=此刻该拿住的水平。",
   "pool": [
     {
       "code": "sh520700", "name": "创新药ETF", "cost": 1.660,
@@ -38,11 +38,11 @@
       ]
     },
     {
-      "code": "sh512880", "name": "证券ETF",
+      "code": "sh512880", "name": "证券ETF", "skip_pos": true,
       "levels": []
     },
     {
-      "code": "sz002738", "name": "中矿资源（观察票）",
+      "code": "sz002738", "name": "中矿资源（观察票）", "skip_pos": true,
       "levels": [
         {"type": "up", "price": 40.250, "desc": "站回=假破位翻案,重新观察", "ref": "b13", "note": "10/12已跌破过"},
         {"type": "up", "price": 42.500, "desc": "放量站上=买点候选", "ref": "B2", "note": "需量比确认"}
