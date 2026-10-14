@@ -97,6 +97,8 @@ def in_window(mode, t=None):
     if t is None:
         _n = datetime.datetime.now(BJ)
         t = _n.hour * 100 + _n.minute
+    if mode == "morning":
+        return 915 <= t <= 940
     if mode in ("intraday", "monitor"):
         return (925 <= t <= 1135) or (1255 <= t <= 1505)
     if mode == "close":
@@ -282,6 +284,50 @@ def line_of(item, rt):
         pnl = (r["price"] / cost - 1) * 100
         parts.append("成本%.3f 浮盈亏%+.1f%%" % (cost, pnl))
     return " ｜ ".join(parts)
+
+
+def build_morning():
+    """早盘盯防（9:25）：以昨收为基准，列出今天要盯的价位（近的、已触发的排前面）"""
+    rt = realtime([i["code"] for i in POOL])
+    today = datetime.datetime.now(BJ).date().isoformat()
+    mk = market_line()
+    lines = ["## 今日盯防（开盘前）%s" % today, ""] + ([mk, ""] if mk else [])
+    hot_blocks, normal_blocks = [], []
+    for item in POOL:
+        code, name = item["code"], item["name"]
+        r = rt.get(code)
+        if not r:
+            continue
+        _t = datetime.datetime.now(BJ).hour * 100 + datetime.datetime.now(BJ).minute
+        base = r["price"] if _t < 915 else r["prev"]
+        watches = []
+        for lv in item.get("levels", []):
+            p = lv["price"]
+            try:
+                dist = abs(p / base - 1)
+            except Exception:
+                continue
+            fired = (lv["type"] == "down" and base < p) or (lv["type"] == "up" and base >= p)
+            if dist <= 0.035 or fired:
+                tag = "🔴" if (fired or dist <= 0.015) else "▫️"
+                arrow = "跌破" if lv["type"] == "down" else "上破"
+                watches.append("%s %.3f %s【%s】%s" % (
+                    tag, p, lv["desc"], lv.get("ref", ""),
+                    "（已达，等确认）" if fired else ""))
+        if watches:
+            blk = "- **%s** 昨收 %.3f ｜ 现 %+.2f%%\n" % (name, base, r["chg"]) + \
+                  "\n".join("  · " + w for w in watches)
+            if any("🔴" in w for w in watches):
+                hot_blocks.append(blk)
+            else:
+                normal_blocks.append(blk)
+    if hot_blocks or normal_blocks:
+        lines += hot_blocks + normal_blocks
+    else:
+        lines.append("- 今日无临近价位，静观即可")
+    lines.append("")
+    lines.append("> 开盘后触发买卖信号会自动推送；本清单每交易日 9:25 送达")
+    return "\n".join(lines)
 
 
 def build_intraday(tag):
@@ -701,7 +747,9 @@ if __name__ == "__main__":
         if not in_window(mode):
             print("[%s] 非有效时段，静默退出防误报（mode=%s）" % (now, mode))
             sys.exit(0)
-        if mode == "intraday":
+        if mode == "morning":
+            push("【今日盯防】" + now, build_morning())
+        elif mode == "intraday":
             push("【策略池对策】" + now, build_intraday(now))
         elif mode == "close":
             push("【收盘复盘+明日预案】" + now, build_close())
