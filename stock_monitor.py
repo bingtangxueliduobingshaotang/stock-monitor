@@ -428,31 +428,32 @@ def build_close():
 
 # ---------------- 今日荐股（仅 close 模式调用） ----------------
 def _snapshot():
-    """全市场快照：东财为主，自动降级新浪涨幅榜（统一结构 f12/f14/f3/f10/f24/f26）"""
-    try:
-        rows = []
-        for pn in range(1, 13):
-            url = ("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=500&po=1&np=1&fltt=2&invt=2"
-                   "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
-                   "&fields=f12,f14,f2,f3,f10,f24,f26" % pn)
-            d = json.loads(http_get(url))
-            diff = (d.get("data") or {}).get("diff") or []
-            if not diff:
-                break
-            rows += diff
-        if len(rows) > 800:
-            return rows
-    except Exception:
-        pass
+    """全市场快照：东财（多域名轮询，全市场约5000只）为主，全挂自动降级新浪涨幅榜（前400）"""
+    for host in ("push2.eastmoney.com", "82.push2.eastmoney.com", "48.push2.eastmoney.com"):
+        try:
+            rows = []
+            for pn in range(1, 13):
+                url = ("https://%s/api/qt/clist/get?pn=%d&pz=500&po=1&np=1&fltt=2&invt=2"
+                       "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+                       "&fields=f12,f14,f2,f3,f10,f24,f26" % (host, pn))
+                d = json.loads(http_get(url))
+                diff = (d.get("data") or {}).get("diff") or []
+                if not diff:
+                    break
+                rows += diff
+            if len(rows) > 800:
+                return rows
+        except Exception:
+            continue
     rows = []
-    for page in (1, 2):
+    for page in range(1, 6):
         url = ("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
                "Market_Center.getHQNodeData?page=%d&num=80&sort=changepercent&asc=0&node=hs_a" % page)
         try:
             arr = json.loads(http_get(url))
         except Exception:
             break
-        if not isinstance(arr, list):
+        if not isinstance(arr, list) or not arr:
             break
         for it in arr:
             code = str(it.get("code", ""))
