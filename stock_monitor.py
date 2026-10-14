@@ -54,13 +54,30 @@ def realtime(codes):
 
 
 def kline(code, n=140):
-    """腾讯前复权日线 -> [[date,open,close,high,low,vol], ...]（盘中最后一根为动态）"""
-    url = ("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,day,,,%d,qfq"
-           % (code, n))
-    j = json.loads(http_get(url))
-    d = j["data"][code]
-    bars = d.get("qfqday") or d.get("day")
-    return [[b[0], float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])] for b in bars]
+    """日线 -> [[date,open,close,high,low,vol], ...]（腾讯为主，失败自动切新浪；盘中最后一根为动态）"""
+    try:
+        url = ("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,day,,,%d,qfq"
+               % (code, n))
+        j = json.loads(http_get(url))
+        d = j["data"][code]
+        bars = d.get("qfqday") or d.get("day")
+        out = [[b[0], float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])] for b in bars]
+        out = [b for b in out if b[5] > 0]
+        if len(out) > 60:
+            return out
+    except Exception:
+        pass
+    url = ("https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData"
+           "?symbol=%s&scale=240&ma=no&datalen=%d" % (code, n))
+    arr = json.loads(http_get(url))
+    out = []
+    for it in arr:
+        try:
+            out.append([str(it["day"]), float(it["open"]), float(it["close"]),
+                        float(it["high"]), float(it["low"]), float(it.get("volume", 0))])
+        except Exception:
+            continue
+    return [b for b in out if b[5] > 0]
 
 
 def is_trading_day():
@@ -121,7 +138,10 @@ def signals(bars):
     vm5p = ma(v, 5, i - 1)
     _now = datetime.datetime.now(BJ)
     _t = _now.hour * 60 + _now.minute
-    _r = min(max((max(0, min(_t, 690) - 570) + max(0, min(_t, 900) - 780)) / 240.0, 0.05), 1.0)
+    if _t < 570:
+        _r = 1.0   # 盘前/凌晨：按最近完整交易日算（避免量比被折算放大）
+    else:
+        _r = min(max((max(0, min(_t, 690) - 570) + max(0, min(_t, 900) - 780)) / 240.0, 0.05), 1.0)
     vr = (v[i] / vm5p / _r) if vm5p else 0
     if not (m5 and m20 and m60 and vm5p and m5p and m20p and m60p):
         return None
@@ -545,6 +565,8 @@ def pick_stock():
             pass
         hh = max(b[3] for b in bars[-120:])
         dd = (hh - sg["close"]) / hh
+        hh20_prev = max(b[3] for b in bars[-21:-1])
+        ma10 = sum(b[2] for b in bars[-10:]) / 10.0
 
         def _score(real_hits, kong, vr_k, dd):
             s = max({"B1": 35, "B2": 40, "B3": 30, "B4": 35}.get(n, 20) for n, d in real_hits) if real_hits else 0
@@ -572,7 +594,8 @@ def pick_stock():
             return min(s, 100), why
 
         item = {"code": tcode, "name": name, "close": sg["close"], "stop": bars[-1][4],
-                "target": hh, "typ": typ, "chg": chg, "vr": round(vr_k, 2)}
+                "target": hh, "defense": hh20_prev, "ma10": ma10,
+                "typ": typ, "chg": chg, "vr": round(vr_k, 2)}
         if real:
             sc, why = _score(real, sg["kong"], vr_k, dd)
             if not sg["kong"] and (not best1 or sc > best1["score"]):
@@ -611,11 +634,14 @@ def pick_line():
     if b.get("vr"):
         lines[1] += "，量比 %.2f" % b["vr"]
     lines.append("- 理由：%s" % "；".join(b["why"]))
-    if b.get("close") and b.get("stop") and b.get("target"):
+    if b.get("defense") and b.get("ma10") and b.get("target"):
+        lines.append("- 关键位：")
+        lines.append("  · 止损/防线 **%.3f**（前20日高/突破位）——跌回下方 = 突破失败，走" % b["defense"])
+        lines.append("  · 支撑 **%.3f**（MA10）——回踩不破可轻仓试" % b["ma10"])
+        lines.append("  · 压力 **%.3f**（120日高=前高套牢区）——到附近减半" % b["target"])
+    elif b.get("close") and b.get("stop") and b.get("target"):
         lines.append("- 预测：守住 %.3f 看震荡上行，上方压力 %.3f；跌破 %.3f = 逻辑破，离场" % (
             b["stop"], b["target"], b["stop"]))
-        lines.append("- 应对：回踩 %.3f 不破可轻仓试；止损 %.3f；到 %.3f 附近减半" % (
-            b["close"] * 0.985, b["stop"], b["target"]))
     lines.append(tail)
     return "\n".join(lines)
 
