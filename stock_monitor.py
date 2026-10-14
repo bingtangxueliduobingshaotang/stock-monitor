@@ -483,12 +483,16 @@ def _fallback_watch(rows):
     return best
 
 
+_PICK_META = {}
+
+
 def pick_stock():
-    """全市场扫描 -> 分级返回：主推（B类+非空头）/ 备选（空头B类或逼近型）/ 观察（兜底）"""
+    """全市场扫描 -> 主推（B类+非空头）或备选（空头B类/逼近型）；没有就 None（宁缺毋滥）"""
     try:
         rows = _snapshot()
     except Exception:
         rows = []
+    _PICK_META["snapshot"] = len(rows)
     if not rows:
         return None
     now = datetime.datetime.now(BJ)
@@ -579,17 +583,18 @@ def pick_stock():
             sc = int(sc * 0.8) if real else min(sc, 62)
             if not best2 or sc > best2["score"]:
                 best2 = dict(item, score=sc, why=why, level="备选")
-    if best1:
-        return best1
-    if best2:
-        return best2
-    return _fallback_watch(rows)
+    return best1 or best2
 
 
 def pick_line():
     b = pick_stock()
     if not b:
-        return "**⭐ 今日荐股**：全市场扫描失败（数据源异常），明天再看"
+        n = _PICK_META.get("snapshot", 0)
+        if n == 0:
+            return ("**⭐ 今日荐股**：⚠️ 数据源异常（全市场扫描未完成）——今日无推荐，"
+                    "属系统问题、非行情问题")
+        return ("**⭐ 今日荐股**：全市场扫描完成（%d 只候选），**暂无符合体系的标的**——"
+                "空仓等信号也是操作（✓ 数据链路正常）" % n)
     lv = b.get("level", "主推")
     if lv == "主推":
         head = "**⭐ 今日荐股：%s（%s）｜ 评分 %d/100**" % (b["name"], b["code"], b["score"])
