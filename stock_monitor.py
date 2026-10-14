@@ -83,7 +83,7 @@ def in_window(mode, t=None):
     if mode in ("intraday", "monitor"):
         return (925 <= t <= 1135) or (1255 <= t <= 1505)
     if mode == "close":
-        return 1500 <= t <= 2359
+        return 1500 <= t <= 1800
     return True
 
 
@@ -176,28 +176,32 @@ def level_status(price, lv):
     return None, False
 
 
-def position_layers(sg, hits, level_broke, level_touch):
-    """建议仓位（0-10 层，10=满配）——若从零配置此刻的理想仓位。
-    基础：空头=0 / 中性=5 / 多头=7；破关键位或S类→降档；B类→+2；上破关键位→+1"""
+def position_layers(sg, hits, broke_half, broke_full, level_touch):
+    """目标仓位（0-10 层，10=该票满配）。v2：
+    基础档 空头=2（持有观察）/ 中性=4 / 多头=6；
+    减半级破位 -2（下限1）；全清级破位 → 0；S类触发 -1（下限1）；B类(非空头) +3；上破 +1"""
     if not sg:
         return None, ""
     m5, m20, m60 = sg["m5"], sg["m20"], sg["m60"]
     if m5 > m20 > m60:
-        base, why = 7, "多头排列"
+        base, why = 6, "多头排列"
     elif sg["kong"]:
-        base, why = 0, "空头排列"
+        base, why = 2, "空头·持有观察"
     else:
-        base, why = 5, "趋势中性"
+        base, why = 4, "趋势中性"
     sell = any(n.startswith("S") for n, _ in hits)
     buy = any(n.startswith("B") for n, _ in hits)
-    if level_broke:
-        base = 0 if base <= 5 else base - 5
-        why += "·破关键位"
+    if broke_full:
+        base = 0
+        why += "·破全清线"
+    elif broke_half:
+        base = max(1, base - 2)
+        why += "·破减半线"
     elif sell:
-        base = max(0, base - 5)
+        base = max(1, base - 1)
         why += "·卖出信号"
     if buy and not sg["kong"]:
-        base = min(10, base + 2)
+        base = min(10, base + 3)
         why += "·买入信号"
     if level_touch and base > 0:
         base = min(10, base + 1)
@@ -291,13 +295,16 @@ def build_intraday(tag):
                         body.append("  · 🔴 <font color=\"red\">**%s**</font>" % txt)
             else:
                 body.append("  · 今日暂无 B/S 触发")
-        level_broke = level_touch = False
+        broke_half = broke_full = level_touch = False
         if r:
             for lv in item.get("levels", []):
                 st, _ = level_status(r["price"], lv)
                 if st:
                     if st == "跌破":
-                        level_broke = True
+                        if "全清" in lv.get("desc", ""):
+                            broke_full = True
+                        else:
+                            broke_half = True
                     if st == "触及":
                         level_touch = True
                     txt = "【%s】%.3f %s（%s【%s】）" % (st, lv["price"], lv["desc"], lv.get("note", ""), lv.get("ref", ""))
@@ -306,10 +313,10 @@ def build_intraday(tag):
                         body.append("  · 🔴 <font color=\"red\">**%s**</font>" % txt)
                     else:
                         body.append("  · %s" % txt)
-        if sg:
-            ly, why = position_layers(sg, sg["hits"], level_broke, level_touch)
+        if sg and not item.get("skip_pos"):
+            ly, why = position_layers(sg, sg["hits"], broke_half, broke_full, level_touch)
             if ly is not None:
-                body.append("  · **仓位：建议 %d/10 层**（%s）" % (ly, why))
+                body.append("  · **目标仓位：%d/10 层**（%s）" % (ly, why))
                 layer_rows.append((item["name"], ly))
         nl = line_of(item, rt)
         lines.append("- 🔴 <font color=\"red\">%s</font>" % nl if hot else "- " + nl)
@@ -322,9 +329,9 @@ def build_intraday(tag):
         lines.append("**建议总仓位：约 %.1f 成**（%s）" % (
             yuan / tot * 10, "、".join("%s %d/10" % (n, l) for n, l in layer_rows)))
     if cap and tot:
-        lines.append("> 仓位口径：若从零配置的理想值（10层=满配，满配=%.1f万/票）；实际持仓按各票执行线处理" % (cap / 10000.0))
+        lines.append("> 仓位口径：目标仓位=此刻该拿住的水平（10层=满配，满配=%.1f万/票）；动作行=今天做什么" % (cap / 10000.0))
     else:
-        lines.append("> 仓位口径：若从零配置的理想值；实际持仓按各票执行线处理")
+        lines.append("> 仓位口径：目标仓位=此刻该拿住的水平；动作行=今天做什么")
     return "\n".join(lines)
 
 
@@ -359,18 +366,21 @@ def build_close():
                     body.append("  · %s" % hot_txt)
             else:
                 body.append("  · 无 B/S 触发")
-        level_broke = level_touch = False
+        broke_half = broke_full = level_touch = False
         if r:
             for lv in item.get("levels", []):
                 st, _ = level_status(r["price"], lv)
                 if st == "跌破":
-                    level_broke = True
+                    if "全清" in lv.get("desc", ""):
+                        broke_full = True
+                    else:
+                        broke_half = True
                 if st == "触及":
                     level_touch = True
-        if sg:
-            ly, why = position_layers(sg, sg["hits"], level_broke, level_touch)
+        if sg and not item.get("skip_pos"):
+            ly, why = position_layers(sg, sg["hits"], broke_half, broke_full, level_touch)
             if ly is not None:
-                body.append("  · **仓位：建议 %d/10 层**（%s）" % (ly, why))
+                body.append("  · **目标仓位：%d/10 层**（%s）" % (ly, why))
                 layer_rows.append((item["name"], ly))
         nl = line_of(item, rt)
         lines.append("- 🔴 <font color=\"red\">%s</font>" % nl if hot else "- " + nl)
@@ -391,7 +401,7 @@ def build_close():
     lines.append(pick_line())
     lines.append("")
     if cap and tot:
-        lines.append("> 仓位口径：若从零配置的理想值（10层=满配，满配=%.1f万/票）；实际持仓按各票执行线处理" % (cap / 10000.0))
+        lines.append("> 仓位口径：目标仓位=此刻该拿住的水平（10层=满配，满配=%.1f万/票）；动作行=今天做什么" % (cap / 10000.0))
     lines.append("> 盘中触发买/卖信号会自动推送告警")
     return "\n".join(lines)
 
