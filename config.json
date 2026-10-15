@@ -5,12 +5,21 @@
   "cap_per_stock": 20000,
   "total_capital": 80000,
   "_仓位口径": "cap_per_stock=单票满配金额（10层=满配）；total_capital=当前总盘子。skip_pos=true 的票不参与仓位显示（证券账户/观察票）。目标仓位=此刻该拿住的水平。",
+  "market": {
+    "_说明": "大盘关键位监控（盘中触发即告警，2026-10-16 验证日布置）",
+    "levels": [
+      {"type": "up", "price": 3724, "desc": "收回3724=假跌破第一条件（反包）", "ref": "b13"},
+      {"type": "up", "price": 3741, "desc": "收回3741=假跌破成立（补缺口）→ 可分批接回", "ref": "b13/s14"},
+      {"type": "down", "price": 3674, "desc": "跌破3674=防线失守，按纪律执行", "ref": "s14"}
+    ]
+  },
   "pool": [
     {
       "code": "sh520700", "name": "创新药ETF", "cost": 1.660,
       "levels": [
         {"type": "up", "price": 1.838, "desc": "触及减1/3", "ref": "s1", "note": "52周高=历史套牢区"},
         {"type": "down", "price": 1.640, "desc": "收盘跌破减半", "ref": "S1", "note": "二浪箱体下沿"},
+        {"type": "up", "price": 1.640, "desc": "收回=假破位翻案（观察，等B类确认再动）", "ref": "b13", "note": "对应减半线"},
         {"type": "down", "price": 1.525, "desc": "收盘跌破全清", "ref": "s6", "note": "剧本证伪线"}
       ]
     },
@@ -18,7 +27,8 @@
       "code": "sz159516", "name": "半导体设备ETF", "cost": 0.718,
       "levels": [
         {"type": "up", "price": 0.700, "desc": "反弹减1/3", "ref": "s1", "note": "MA20+8月平台下沿"},
-        {"type": "down", "price": 0.630, "desc": "收盘跌破全清", "ref": "S1", "note": "低点抬高结构线"}
+        {"type": "down", "price": 0.630, "desc": "收盘跌破全清", "ref": "S1", "note": "低点抬高结构线"},
+        {"type": "up", "price": 0.630, "desc": "收回=假破位翻案（观察，等确认）", "ref": "b13", "note": "对应全清线"}
       ]
     },
     {
@@ -34,7 +44,8 @@
       "levels": [
         {"type": "up", "price": 5.000, "desc": "反弹减半", "ref": "s2", "note": "前低+平台下沿"},
         {"type": "up", "price": 5.300, "desc": "放量站上才谈持有", "ref": "B2", "note": "需量比1.8确认"},
-        {"type": "down", "price": 4.870, "desc": "跌破全清", "ref": "S1", "note": "本轮最低"}
+        {"type": "down", "price": 4.870, "desc": "跌破全清", "ref": "S1", "note": "本轮最低"},
+        {"type": "up", "price": 4.870, "desc": "收回=假破位嫌疑（观察，3天内可接回）", "ref": "b13", "note": "对应全清线"}
       ]
     },
     {
