@@ -903,6 +903,21 @@ def build_monitor():
     state = load_state()
     rt = realtime([i["code"] for i in POOL])
     alerts = []
+    # 大盘关键位（config 的 market 段；2026-10-16 验证日布置）
+    try:
+        mkrt = realtime(["sh000001"]).get("sh000001")
+        if mkrt:
+            for lv in CFG.get("market", {}).get("levels", []):
+                key = "market|level|%s|%s" % (lv["type"], lv["price"])
+                st, fired = level_status(mkrt["price"], lv)
+                if fired and key not in state["fired"]:
+                    state["fired"].append(key)
+                    alerts.append("🔴 <font color=\"red\">**【上证指数】现价 %.2f %s %.2f**</font>\n**动作：%s**（【%s】）" % (
+                        mkrt["price"], "上破" if lv["type"] == "up" else "跌破",
+                        lv["price"], lv["desc"], lv.get("ref", "")))
+            save_state(state)
+    except Exception:
+        pass
     for item in POOL:
         code, name = item["code"], item["name"]
         r = rt.get(code)
