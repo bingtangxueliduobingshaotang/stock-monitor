@@ -326,6 +326,34 @@ def build_morning():
     else:
         lines.append("- 今日无临近价位，静观即可")
     lines.append("")
+    # 今日荐股：体系款 + 打板款（各 1 只；已剔除涨停/ST/新股）
+    lines.append("### 今日荐股")
+    try:
+        b1 = pick_stock()
+        if b1:
+            base1 = b1.get("price") or b1.get("close")
+            log_pick("体系", b1["code"], b1["name"], base1, "评分%d" % b1["score"])
+            lines.append("**【体系款】%s（%s）** 现 %.3f ｜ %s ｜ 评分 %d/100" % (
+                b1["name"], b1["code"], base1, "；".join(b1["why"][:3]), b1["score"]))
+            if b1.get("defense") and b1.get("ma10") and b1.get("target"):
+                lines.append("- 关键位：止损/防线 %.3f ｜ 支撑 %.3f（MA10） ｜ 压力 %.3f" % (
+                    b1["defense"], b1["ma10"], b1["target"]))
+        else:
+            lines.append("**【体系款】** 今日无符合标准的标的（宁缺毋滥）")
+    except Exception as e:
+        lines.append("**【体系款】** 扫描失败：%s" % str(e)[:60])
+    try:
+        b2 = pick_daban()
+        if b2:
+            log_pick("打板", b2["code"], b2["name"], b2["close"], "打板审美")
+            lines.append("**【打板款】%s（%s）** 现 %.3f ｜ 涨 %.1f%% ｜ 量比 %.2f" % (
+                b2["name"], b2["code"], b2["close"], b2["chg"], b2["vr"]))
+            lines.append("- 看点：%s（未封板可低吸；次日看竞价强弱，「弱转强」才是机会）" % b2["why"])
+        else:
+            lines.append("**【打板款】** 今日无符合标准的标的（宁缺毋滥）")
+    except Exception as e:
+        lines.append("**【打板款】** 扫描失败：%s" % str(e)[:60])
+    lines.append("")
     lines.append("> 开盘后触发买卖信号会自动推送；本清单每交易日 9:25 送达")
     return "\n".join(lines)
 
@@ -464,7 +492,7 @@ def build_close():
     lines.append("### 明日盯防（挂条件单/预警）")
     lines.extend(tomorrow)
     lines.append("")
-    lines.append(pick_line())
+    lines.append(track_picks())
     lines.append("")
     if cap and tot:
         lines.append("> 仓位口径：目标仓位=此刻该拿住的水平（10层=满配，满配=%.1f万/票）；动作行=今天做什么" % (cap / 10000.0))
@@ -481,7 +509,7 @@ def _snapshot():
             for pn in range(1, 13):
                 url = ("https://%s/api/qt/clist/get?pn=%d&pz=500&po=1&np=1&fltt=2&invt=2"
                        "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
-                       "&fields=f12,f14,f2,f3,f10,f24,f26" % (host, pn))
+                       "&fields=f12,f14,f2,f3,f10,f20,f24,f26" % (host, pn))
                 d = json.loads(http_get(url))
                 diff = (d.get("data") or {}).get("diff") or []
                 if not diff:
@@ -510,7 +538,8 @@ def _snapshot():
             except Exception:
                 continue
             rows.append({"f12": code, "f14": str(it.get("name", "")), "f3": chg,
-                         "f10": None, "f24": None, "f26": ""})
+                         "f2": float(it.get("trade", 0) or 0), "f10": None, "f20": None,
+                         "f24": None, "f26": ""})
     return rows
 
 
@@ -580,20 +609,26 @@ def pick_stock():
             chg = float(it.get("f3"))
         except Exception:
             continue
+        if chg >= (19.7 if code.startswith(("30", "68")) else 9.7):
+            continue  # 涨停/接近涨停：买不进且无空间，不推荐
         vr = it.get("f10")
         dd60 = it.get("f24")
         try:
             vrf = float(vr) if vr is not None else None
         except Exception:
             vrf = None
+        try:
+            f2 = float(it.get("f2")) if it.get("f2") else None
+        except Exception:
+            f2 = None
         if chg >= 5 and (vrf is None or vrf >= 1.8):
-            cand.append(("强势突破", code, name, chg))
+            cand.append(("强势突破", code, name, chg, f2))
         elif vrf is not None and isinstance(dd60, (int, float)) and dd60 <= -30 and vrf <= 0.8 and chg > 0:
-            cand.append(("超跌反转", code, name, chg))
+            cand.append(("超跌反转", code, name, chg, f2))
     strong = [c for c in cand if c[0] == "强势突破"][:40]
     low = [c for c in cand if c[0] == "超跌反转"][:40]
     best1 = best2 = None
-    for typ, code, name, chg in strong + low:
+    for typ, code, name, chg, f2 in strong + low:
         tcode = ("sh" if code.startswith(("6", "5")) else "sz") + code
         try:
             bars = kline(tcode, 140)
@@ -614,6 +649,7 @@ def pick_stock():
         dd = (hh - sg["close"]) / hh
         hh20_prev = max(b[3] for b in bars[-21:-1])
         ma10 = sum(b[2] for b in bars[-10:]) / 10.0
+        defense = hh20_prev if sg["close"] >= hh20_prev * 0.99 else float(bars[-1][4])
 
         def _score(real_hits, kong, vr_k, dd):
             s = max({"B1": 35, "B2": 40, "B3": 30, "B4": 35}.get(n, 20) for n, d in real_hits) if real_hits else 0
@@ -641,7 +677,8 @@ def pick_stock():
             return min(s, 100), why
 
         item = {"code": tcode, "name": name, "close": sg["close"], "stop": bars[-1][4],
-                "target": hh, "defense": hh20_prev, "ma10": ma10,
+                "target": hh, "defense": defense, "ma10": ma10,
+                "price": float(f2 or sg["close"]),
                 "typ": typ, "chg": chg, "vr": round(vr_k, 2)}
         if real:
             sc, why = _score(real, sg["kong"], vr_k, dd)
@@ -654,6 +691,121 @@ def pick_stock():
             if not best2 or sc > best2["score"]:
                 best2 = dict(item, score=sc, why=why, level="备选")
     return best1 or best2
+
+
+def pick_daban():
+    """九哥打板审美（低吸版）：主板10cm + 低价(≤12元) + 低市值(≤150亿) + 非ST新股 +
+    今日未涨停 + 强势(3%~涨停前) + 量能活跃。返回 dict 或 None"""
+    try:
+        rows = _snapshot()
+    except Exception:
+        rows = []
+    if not rows:
+        return None
+    now = datetime.datetime.now(BJ)
+    best = None
+    for it in rows:
+        name = str(it.get("f14", ""))
+        code = str(it.get("f12", ""))
+        if not code or "ST" in name or "退" in name or name.startswith("N"):
+            continue
+        if not code.startswith(("60", "00")):
+            continue  # 九哥：只做 10cm 主板（明确回避 20cm 与北交所）
+        listed = str(it.get("f26", "") or "")
+        if listed.isdigit() and len(listed) == 8:
+            try:
+                if (now - datetime.datetime.strptime(listed, "%Y%m%d")).days < 120:
+                    continue
+            except Exception:
+                pass
+        try:
+            chg = float(it.get("f3"))
+            vr = float(it.get("f10") or 0)
+            price = float(it.get("f2") or 0)
+        except Exception:
+            continue
+        if price <= 0 or price > 12:
+            continue          # 龙头审美① 低价起步（≤12元）
+        if chg >= 9.7 or chg < 3:
+            continue          # 未涨停（买得进）+ 有强度
+        mv = it.get("f20")
+        if isinstance(mv, (int, float)) and mv > 0 and mv > 150e8:
+            continue          # 龙头审美② 市值 ≤150亿
+        if vr < 1.5:
+            continue          # 量能活跃
+        score = chg * 10 + min(vr, 4) * 5 + max(0, 12 - price)
+        why = ["主板10cm", "价%.2f（低价审美）" % price, "涨%.1f%%未涨停" % chg, "量比%.2f" % vr]
+        if isinstance(mv, (int, float)) and mv > 0:
+            why.append("市值%.0f亿" % (mv / 1e8))
+        item = {"code": ("sh" if code.startswith("6") else "sz") + code,
+                "name": name, "chg": chg, "vr": round(vr, 2), "close": price,
+                "score": int(min(99, score)), "why": "；".join(why)}
+        if not best or item["score"] > best["score"]:
+            best = item
+    return best
+
+
+# ---- 荐股账本：盘前荐 2 只，收盘跟踪 5 个交易日 ----
+def _picks_path():
+    return os.path.join(os.path.dirname(STATE_FILE), "picks.json")
+
+
+def load_picks():
+    try:
+        return json.load(open(_picks_path(), encoding="utf-8"))
+    except Exception:
+        return {"active": [], "done": []}
+
+
+def save_picks(pf):
+    try:
+        os.makedirs(os.path.dirname(_picks_path()), exist_ok=True)
+        json.dump(pf, open(_picks_path(), "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def log_pick(kind, code, name, base, note):
+    """盘前荐股入账（同日同代码去重）"""
+    pf = load_picks()
+    today = datetime.datetime.now(BJ).date().isoformat()
+    for p in pf["active"]:
+        if p["date"] == today and p["code"] == code:
+            return
+    pf["active"].append({"date": today, "kind": kind, "code": code, "name": name,
+                         "base": base, "note": note, "log": []})
+    save_picks(pf)
+
+
+def track_picks():
+    """收盘跟踪：更新近5日荐股表现并输出；满5个交易日归档"""
+    pf = load_picks()
+    today = datetime.datetime.now(BJ).date().isoformat()
+    if not pf["active"]:
+        return "**⭐ 荐股跟踪**：暂无在跟标的（每交易日 9:25 荐 2 只：体系款+打板款）"
+    rt = realtime([p["code"] for p in pf["active"]])
+    lines = ["**⭐ 荐股跟踪（近5个交易日）**"]
+    still = []
+    for p in pf["active"]:
+        r = rt.get(p["code"])
+        c = r["price"] if r else None
+        if c and (not p["log"] or p["log"][-1][0] != today):
+            p["log"].append([today, c, round((c / p["base"] - 1) * 100, 2)])
+        cur = p["log"][-1][2] if p["log"] else 0.0
+        day = None
+        if len(p["log"]) >= 2:
+            day = round((p["log"][-1][1] / p["log"][-2][1] - 1) * 100, 2)
+        n = len(p["log"])
+        seg = "今 %+.2f%% ｜ " % day if day is not None else ""
+        lines.append("- 【%s】%s（%s 荐）｜ %s累计 %+.2f%% ｜ 第 %d/5 天" % (
+            p["kind"], p["name"], p["date"][5:], seg, cur, min(n, 5)))
+        if n >= 5:
+            pf["done"].append(p)
+        else:
+            still.append(p)
+    pf["active"] = still
+    save_picks(pf)
+    return "\n".join(lines)
 
 
 def pick_line():
