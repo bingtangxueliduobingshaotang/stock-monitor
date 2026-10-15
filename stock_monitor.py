@@ -286,12 +286,65 @@ def line_of(item, rt):
     return " ｜ ".join(parts)
 
 
+def overnight_line():
+    """隔夜外围：美股三大+黄金+原油（腾讯行情） + 隔夜要闻精选（新浪7x24）"""
+    parts = []
+    try:
+        raw = http_get("https://qt.gtimg.cn/q=usDJI,usIXIC,usINX,hf_GC,hf_CL,hf_XAU", gbk=True)
+        names = {"usDJI": "道指", "usIXIC": "纳指", "usINX": "标普", "hf_GC": "纽约金",
+                 "hf_CL": "原油", "hf_XAU": "伦敦金"}
+        for line in raw.strip().split(";"):
+            if "=" not in line:
+                continue
+            k = line.split("=")[0].replace("v_", "").strip()
+            v = line.split('="', 1)[1].rstrip('"') if '="' in line else ""
+            if not v:
+                continue
+            if k.startswith("hf_"):
+                p = v.split(",")
+                if len(p) > 2:
+                    parts.append("%s %s（%s%%）" % (names.get(k, k), p[0], p[1]))
+            else:
+                p2 = v.split("~")
+                if len(p2) > 32:
+                    parts.append("%s %s（%s%%）" % (names.get(k, k), p2[3], p2[32]))
+    except Exception:
+        pass
+    lines = []
+    if parts:
+        lines.append("**隔夜外围**：" + " ｜ ".join(parts))
+    try:
+        j = json.loads(http_get("https://zhibo.sina.com.cn/api/zhibo/feed?page=1&page_size=30&zhibo_id=152&tag_id=0&dire=f&dpc=1"))
+        items = j.get("result", {}).get("data", {}).get("feed", {}).get("list", [])
+        keys = ("美联储", "欧洲央行", "中国央行", "降息", "加息", "CPI", "PPI", "非农", "关税",
+                "美股", "纳斯达克", "标普", "道琼斯", "英伟达", "台积电", "特斯拉", "A股", "沪深",
+                "人民币", "证监会", "国常会")
+        picked = []
+        for it in items:
+            txt = (it.get("rich_text") or it.get("text") or "").replace("\n", " ").strip()
+            if any(w in txt for w in keys) and len(txt) > 10:
+                t = (it.get("create_time") or "")[5:16]
+                picked.append("%s %s" % (t, txt[:78]))
+            if len(picked) >= 5:
+                break
+        if picked:
+            lines.append("**隔夜要闻**：")
+            lines += ["  · " + x for x in picked]
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
 def build_morning():
     """早盘盯防（9:25）：以昨收为基准，列出今天要盯的价位（近的、已触发的排前面）"""
     rt = realtime([i["code"] for i in POOL])
     today = datetime.datetime.now(BJ).date().isoformat()
     mk = market_line()
     lines = ["## 今日盯防（开盘前）%s" % today, ""] + ([mk, ""] if mk else [])
+    ov = overnight_line()
+    if ov:
+        lines.append(ov)
+        lines.append("")
     hot_blocks, normal_blocks = [], []
     for item in POOL:
         code, name = item["code"], item["name"]
