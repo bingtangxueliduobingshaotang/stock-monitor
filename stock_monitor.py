@@ -918,6 +918,23 @@ def build_monitor():
             save_state(state)
     except Exception:
         pass
+    # 银行 5 日线信号（小寒"右侧信号"；与 Q8 框架互证）
+    try:
+        bkbars = kline("sz399986", 10)
+        bkrt = realtime(["sz399986"]).get("sz399986")
+        if bkrt and len(bkbars) >= 5:
+            ma5 = sum(b[2] for b in bkbars[-5:]) / 5.0
+            key = "bank|ma5|break"
+            if bkrt["price"] < ma5 * 0.995:
+                if key not in state["fired"]:
+                    state["fired"].append(key)
+                    alerts.append("🔵 【中证银行】现价 %.2f **跌破 5 日线**（MA5 %.2f）\n**小寒右侧信号出现**：资金或开始从防御切换——关注科技/证券承接（Q8 框架）" % (bkrt["price"], ma5))
+            else:
+                if key in state["fired"]:
+                    state["fired"].remove(key)
+            save_state(state)
+    except Exception:
+        pass
     for item in POOL:
         code, name = item["code"], item["name"]
         r = rt.get(code)
