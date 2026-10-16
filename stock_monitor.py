@@ -743,7 +743,10 @@ def pick_stock():
             sc = int(sc * 0.8) if real else min(sc, 62)
             if not best2 or sc > best2["score"]:
                 best2 = dict(item, score=sc, why=why, level="备选")
-    return best1 or best2
+    pick = best1 or best2
+    if pick and pick.get("score", 0) < 80:
+        pick = None   # 80 分门槛（2026-10-16 用户要求：低于 80 不推，宁缺毋滥）
+    return pick
 
 
 def pick_daban():
@@ -795,6 +798,8 @@ def pick_daban():
                 "score": int(min(99, score)), "why": "；".join(why)}
         if not best or item["score"] > best["score"]:
             best = item
+    if best and best.get("score", 0) < 80:
+        best = None   # 80 分门槛（2026-10-16 用户要求）
     return best
 
 
@@ -828,6 +833,7 @@ def log_pick(kind, code, name, base, note):
     pf["active"].append({"date": today, "kind": kind, "code": code, "name": name,
                          "base": base, "note": note, "log": []})
     save_picks(pf)
+    print("PICK-LOG: %s %s(%s) base=%.3f %s" % (kind, name, code, base, note), flush=True)
 
 
 def track_picks():
