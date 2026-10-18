@@ -399,9 +399,11 @@ def build_morning():
         b2 = pick_daban()
         if b2:
             log_pick("打板", b2["code"], b2["name"], b2["close"], "打板审美")
-            lines.append("**【打板款】%s（%s）** 现 %.3f ｜ 涨 %.1f%% ｜ 量比 %.2f" % (
-                b2["name"], b2["code"], b2["close"], b2["chg"], b2["vr"]))
+            lines.append("**【打板款】%s（%s）** 现 %.3f ｜ 涨 %.1f%% ｜ %s" % (
+                b2["name"], b2["code"], b2["close"], b2["chg"], b2.get("vdisp") or ("量比%.2f" % b2["vr"])))
             lines.append("- 看点：%s（未封板可低吸；次日看竞价强弱，「弱转强」才是机会）" % b2["why"])
+            if b2.get("note"):
+                lines.append("- ⚠️ %s" % b2["note"])
         else:
             lines.append("**【打板款】** 今日无符合标准的标的（宁缺毋滥）")
     except Exception as e:
@@ -562,7 +564,7 @@ def _snapshot():
             for pn in range(1, 13):
                 url = ("https://%s/api/qt/clist/get?pn=%d&pz=500&po=1&np=1&fltt=2&invt=2"
                        "&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
-                       "&fields=f12,f14,f2,f3,f10,f20,f24,f26" % (host, pn))
+                       "&fields=f12,f14,f2,f3,f10,f20,f21,f24,f26" % (host, pn))
                 d = json.loads(http_get(url))
                 diff = (d.get("data") or {}).get("diff") or []
                 if not diff:
@@ -749,9 +751,57 @@ def pick_stock():
     return pick
 
 
+def _free_mv(code):
+    """流通市值（亿元）：腾讯行情第 45 位为主，失败返回 None"""
+    try:
+        txt = http_get("https://qt.gtimg.cn/q=%s" % code, gbk=True)
+        parts = txt.split("~")
+        for idx in (44, 45):
+            if len(parts) > idx:
+                try:
+                    v = float(parts[idx])
+                    if 1 <= v <= 20000:
+                        return v
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
+def _daban_audit(code, price):
+    """按《打板手册（融合版）》审美核验：连板数 / 距前高 / 放量
+    返回 dict：lim=连板数, hi=距60日新高%, vol=今日量/5日均量"""
+    try:
+        bars = kline(code, 70)
+    except Exception:
+        return {}
+    if not bars or len(bars) < 15:
+        return {}
+    closes = [b[2] for b in bars]      # [date,open,close,high,low,vol]
+    vols = [b[5] for b in bars]
+    # 连板数：从最后一根往前数"涨幅≥9.8%"
+    lim = 0
+    for k in range(len(closes) - 1, 0, -1):
+        if closes[k - 1] > 0 and (closes[k] / closes[k - 1] - 1) >= 0.098:
+            lim += 1
+        else:
+            break
+    # 距60日新高（不含最后3日，避免自身影响）
+    seg = closes[-63:-3] if len(closes) > 63 else closes[:-3]
+    hi60 = max(seg) if seg else price
+    hi = (price / hi60 - 1) * 100 if hi60 else 0
+    v5 = sum(vols[-6:-1]) / 5.0 if len(vols) >= 6 else vols[-1]
+    volr = (vols[-1] / v5) if v5 else 1.0
+    return {"lim": lim, "hi": hi, "volr": volr, "hi60": hi60}
+
+
 def pick_daban():
-    """九哥打板审美（低吸版）：主板10cm + 低价(≤12元) + 低市值(≤150亿) + 非ST新股 +
-    今日未涨停 + 强势(3%~涨停前) + 量能活跃。返回 dict 或 None"""
+    """【打板款·2026-10-19 起按《打板手册（融合版）》审美】
+    硬指标：主板10cm / 可流通市值 20~60 亿 / 低价（≤12元）/ 未涨停（3%~9.7%）/ 量比≥1.5
+    加分项：2~3板内（≤3）/ 距 60 日新高 ≤10%（"两三个板就创新高"）/ 放量（≥1.5 倍5日均量）
+    明确回避：20cm（创业/科创）、北交所、ST/退/N、上市<120天
+    返回 dict 或 None"""
     try:
         rows = _snapshot()
     except Exception:
@@ -759,14 +809,14 @@ def pick_daban():
     if not rows:
         return None
     now = datetime.datetime.now(BJ)
-    best = None
+    cands = []
     for it in rows:
         name = str(it.get("f14", ""))
         code = str(it.get("f12", ""))
         if not code or "ST" in name or "退" in name or name.startswith("N"):
             continue
         if not code.startswith(("60", "00")):
-            continue  # 九哥：只做 10cm 主板（明确回避 20cm 与北交所）
+            continue                      # 手册 3.5：回避 20cm 与北交所
         listed = str(it.get("f26", "") or "")
         if listed.isdigit() and len(listed) == 8:
             try:
@@ -781,26 +831,67 @@ def pick_daban():
         except Exception:
             continue
         if price <= 0 or price > 12:
-            continue          # 龙头审美① 低价起步（≤12元）
+            continue                      # 手册 3.2②："没有哪个龙头是超过十块钱起步的"
         if chg >= 9.7 or chg < 3:
-            continue          # 未涨停（买得进）+ 有强度
-        mv = it.get("f20")
-        if isinstance(mv, (int, float)) and mv > 0 and mv > 150e8:
-            continue          # 龙头审美② 市值 ≤150亿
-        if vr < 1.5:
-            continue          # 量能活跃
+            continue                      # 未涨停（买得进）+ 有强度
+        # 可流通市值 20~60 亿（手册 2.1：20~30 亿最舒服，放宽到 60）
+        fmv = it.get("f21")
+        tmv = it.get("f20")
+        if not isinstance(fmv, (int, float)) or fmv <= 0:
+            fmv = (tmv * 0.6) if isinstance(tmv, (int, float)) and tmv > 0 else None
+        if fmv and not (20e8 <= fmv <= 60e8):
+            continue
+        cands.append((it, code, name, price, chg, vr, fmv))
+    # 按"强度×量能×低价"粗排，取前 8 只再拉K线核验（控请求量）
+    cands.sort(key=lambda x: -(x[4] * 10 + min(x[5], 4) * 5 + max(0, 12 - x[3])))
+    for it, code, name, price, chg, vr, fmv in cands[:8]:
+        full = ("sh" if code.startswith("6") else "sz") + code
+
+        # ① K线核验（连板数 / 距新高 / 量能倍数）——拿不到就不推
+        a = _daban_audit(full, price)
+        if not a:
+            continue
+        if a["volr"] < 1.2:
+            continue                     # 手册 b34：量不到，一切反弹只是反抽
+
+        # ② 流通市值复核（腾讯行情）——手册 2.1：20~30 亿最舒服，放宽到 60
+        fmv_yi = _free_mv(full)
+        if fmv_yi is not None:
+            if not (20 <= fmv_yi <= 60):
+                continue
+        elif fmv:
+            fmv_yi = fmv / 1e8
+        else:
+            continue                     # 两头都拿不到流通市值 → 不猜，跳过
+
         score = chg * 10 + min(vr, 4) * 5 + max(0, 12 - price)
-        why = ["主板10cm", "价%.2f（低价审美）" % price, "涨%.1f%%未涨停" % chg, "量比%.2f" % vr]
-        if isinstance(mv, (int, float)) and mv > 0:
-            why.append("市值%.0f亿" % (mv / 1e8))
-        item = {"code": ("sh" if code.startswith("6") else "sz") + code,
-                "name": name, "chg": chg, "vr": round(vr, 2), "close": price,
-                "score": int(min(99, score)), "why": "；".join(why)}
-        if not best or item["score"] > best["score"]:
-            best = item
-    if best and best.get("score", 0) < 80:
-        best = None   # 80 分门槛（2026-10-16 用户要求）
-    return best
+        why = ["主板10cm", "价%.2f" % price, "涨%.1f%%未涨停" % chg,
+               ("量比%.2f" % vr) if vr else ("量能%.1f倍(5日均)" % a["volr"]),
+               "流通%.0f亿" % fmv_yi]
+
+        # ③ 加分与排除（手册第二章 / 3.2）
+        if a["lim"] >= 1:
+            if a["lim"] > 3:
+                continue                 # 3 板以上=跟风区，不做
+            why.append("%d连板" % a["lim"])
+            score += 6 * a["lim"]
+        if a["hi"] >= -10:
+            why.append("距60日新高%.1f%%" % a["hi"])
+            score += 8                   # "两三个板就创新高"=上方无套牢
+        elif a["hi"] < -30:
+            score -= 10                  # 头顶一堆套牢盘
+        if a["volr"] >= 1.5:
+            why.append("放量%.1f倍" % a["volr"])
+            score += 5
+
+        vdisp = ("量比%.2f" % vr) if vr else ("量能%.1f倍" % a["volr"])
+        item = {"code": full, "name": name, "chg": chg, "vr": round(vr, 2), "close": price,
+                "vdisp": vdisp,
+                "score": int(min(99, score)), "why": "；".join(why),
+                "note": "打板审美：需 F10 核「5%以上股东占比≥30%」再动手"}
+        if score >= 80:
+            return item
+    return None
 
 
 # ---- 荐股账本：盘前荐 2 只，收盘跟踪 5 个交易日 ----
