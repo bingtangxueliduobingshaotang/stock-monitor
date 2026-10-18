@@ -157,7 +157,7 @@ def signals(bars):
     hv60 = max(v[i - 59:i + 1]) if i >= 59 else max(v[:i + 1])
     # 昨日的单针形态（供今日 B4 确认）
     sty, syy = h[i - 1] - l[i - 1], min(o[i - 1], c[i - 1]) - l[i - 1]
-    prev_b5 = sty > 0 and syy / sty >= 0.5 and l[i - 1] <= m20p * 1.02 and c[i - 1] >= c[i - 2] * 0.97
+    prev_b4 = sty > 0 and syy / sty >= 0.5 and l[i - 1] <= m20p * 1.02 and c[i - 1] >= c[i - 2] * 0.97
 
     hits = []
     if zf >= 0.05 and vr >= 1.8 and c[i - 1] <= m20p < c[i]:
@@ -166,7 +166,7 @@ def signals(bars):
         hits.append(("B2", "放量真突破（破20日高+量比1.8）"))
     if c[i] > hh20p and c[i - 1] > max(h[i - 21:i - 1]):
         hits.append(("B3", "两天确认（连续站上20日高）"))
-    if prev_b5 and c[i] >= c[i - 1]:
+    if prev_b4 and c[i] >= c[i - 1]:
         hits.append(("B4", "底分型确认（昨日单针+今日收红）"))
     if c[i] < ll20p * 0.98 and c[i - 1] >= ll20p:
         hits.append(("S1", "箱体下沿失守"))
