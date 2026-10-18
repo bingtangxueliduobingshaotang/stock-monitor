@@ -881,7 +881,7 @@ def pick_daban():
         elif a["hi"] < -30:
             score -= 10                  # 头顶一堆套牢盘
         if a["volr"] >= 1.5:
-            why.append("放量%.1f倍" % a["volr"])
+            why.append("放量确认")
             score += 5
 
         vdisp = ("量比%.2f" % vr) if vr else ("量能%.1f倍" % a["volr"])
