@@ -232,10 +232,35 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 
 
 # ---------------- 推送层 ----------------
+def mail_fallback(title, content, pp_code=None):
+    """邮件兜底通道：config.json 的 mail 段；发送失败只打日志，不影响主流程"""
+    cfg = CFG.get("mail") or {}
+    user, pwd, to = cfg.get("user"), cfg.get("pass"), cfg.get("to")
+    if not (user and pwd and to):
+        return
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.header import Header
+    tag = "（PushPlus 未确认送达，邮件兜底）" if pp_code != 200 else ""
+    body = content[:20000] + "\n\n---\n\n[通道] PushPlus 返回 %s%s" % (pp_code, tag)
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = Header(title, "utf-8")
+        msg["From"] = user
+        msg["To"] = to
+        sv = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=30)
+        sv.login(user, pwd)
+        sv.sendmail(user, [to], msg.as_string())
+        sv.quit()
+        print("MAIL: OK ->", to)
+    except Exception as e:
+        print("MAIL ERR:", str(e)[:100])
+
+
 def push(title, content):
     if not TOKEN:
-        print("[WARN] 未配置 PUSHPLUS_TOKEN，跳过推送")
-        print(content)
+        print("[WARN] 未配置 PUSHPLUS_TOKEN，跳过 PushPlus，走邮件通道")
+        mail_fallback(title, content, None)
         return
     st = load_state()
     st["count"] = st.get("count", 0) + 1
@@ -245,8 +270,15 @@ def push(title, content):
                        "template": "markdown"}).encode("utf-8")
     req = urllib.request.Request("https://www.pushplus.plus/send", data=body,
                                  headers={"Content-Type": "application/json"})
-    r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
-    print("PUSH:", r.get("code"), r.get("msg"))
+    code, msg = None, ""
+    try:
+        r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
+        code, msg = r.get("code"), r.get("msg")
+        print("PUSH:", code, msg)
+    except Exception as e:
+        print("PUSH ERR:", str(e)[:80])
+    # 邮件兜底（PushPlus 不可靠时保证送达）
+    mail_fallback(title, content, code)
 
 
 def load_state():
