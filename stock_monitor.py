@@ -232,35 +232,9 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 
 
 # ---------------- 推送层 ----------------
-def mail_fallback(title, content, pp_code=None):
-    """邮件兜底通道：config.json 的 mail 段；发送失败只打日志，不影响主流程"""
-    cfg = CFG.get("mail") or {}
-    user, pwd, to = cfg.get("user"), cfg.get("pass"), cfg.get("to")
-    if not (user and pwd and to):
-        return
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.header import Header
-    tag = "（PushPlus 未确认送达，邮件兜底）" if pp_code != 200 else ""
-    body = content[:20000] + "\n\n---\n\n[通道] PushPlus 返回 %s%s" % (pp_code, tag)
-    try:
-        msg = MIMEText(body, "plain", "utf-8")
-        msg["Subject"] = Header(title, "utf-8")
-        msg["From"] = user
-        msg["To"] = to
-        sv = smtplib.SMTP_SSL("smtp.qq.com", 465, timeout=30)
-        sv.login(user, pwd)
-        sv.sendmail(user, [to], msg.as_string())
-        sv.quit()
-        print("MAIL: OK ->", to)
-    except Exception as e:
-        print("MAIL ERR:", str(e)[:100])
-
-
 def push(title, content):
     if not TOKEN:
-        print("[WARN] 未配置 PUSHPLUS_TOKEN，跳过 PushPlus，走邮件通道")
-        mail_fallback(title, content, None)
+        print("[WARN] 未配置 PUSHPLUS_TOKEN，跳过推送")
         return
     st = load_state()
     st["count"] = st.get("count", 0) + 1
@@ -277,8 +251,7 @@ def push(title, content):
         print("PUSH:", code, msg, "| data=", str(r.get("data"))[:120])
     except Exception as e:
         print("PUSH ERR:", str(e)[:80])
-    # 邮件兜底（PushPlus 不可靠时保证送达）
-    mail_fallback(title, content, code)
+    # 邮件通道已按要求下线：日常只推微信（邮箱仅用于发《焚绝》）
 
 
 def load_state():
