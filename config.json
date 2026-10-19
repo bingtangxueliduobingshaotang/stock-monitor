@@ -8,58 +8,197 @@
   "market": {
     "_说明": "大盘关键位监控（盘中触发即告警，2026-10-16 验证日布置）",
     "levels": [
-      {"type": "up", "price": 3724, "desc": "收回3724=假跌破第一条件（反包）", "ref": "b11"},
-      {"type": "up", "price": 3741, "desc": "收回3741=假跌破成立（补缺口）→ 可分批接回", "ref": "b11/s8"},
-      {"type": "down", "price": 3674, "desc": "跌破3674=防线失守（3天内收不回=真空，下一站3500）", "ref": "s8/b21"},
-      {"type": "up", "price": 3810, "desc": "站上5日线+走平=反抽升级为反弹（可做自己手上的）", "ref": "b21"},
-      {"type": "up", "price": 3900, "desc": "20周线/60日线≈3900：反弹目标位，仓位重的减1/3（要割就割在这）", "ref": "b21"}
+      {
+        "type": "up",
+        "price": 3724,
+        "desc": "收回3724=假跌破第一条件（反包）",
+        "ref": "b11"
+      },
+      {
+        "type": "up",
+        "price": 3741,
+        "desc": "收回3741=假跌破成立（补缺口）→ 可分批接回",
+        "ref": "b11/s8"
+      },
+      {
+        "type": "down",
+        "price": 3674,
+        "desc": "跌破3674=防线失守（3天内收不回=真空，下一站3500）",
+        "ref": "s8/b21"
+      },
+      {
+        "type": "up",
+        "price": 3810,
+        "desc": "站上5日线+走平=反抽升级为反弹（可做自己手上的）",
+        "ref": "b21"
+      },
+      {
+        "type": "up",
+        "price": 3900,
+        "desc": "20周线/60日线≈3900：反弹目标位，仓位重的减1/3（要割就割在这）",
+        "ref": "b21"
+      }
     ]
   },
   "pool": [
     {
-      "code": "sh520700", "name": "创新药ETF", "cost": 1.660,
+      "code": "sh520700",
+      "name": "创新药ETF",
+      "cost": 1.66,
       "levels": [
-        {"type": "up", "price": 1.838, "desc": "触及减1/3", "ref": "s1", "note": "52周高=历史套牢区"},
-        {"type": "down", "price": 1.640, "desc": "收盘跌破减半", "ref": "S1", "note": "二浪箱体下沿"},
-        {"type": "up", "price": 1.640, "desc": "收回=假破位翻案（观察，等B类确认再动）", "ref": "b11", "note": "对应减半线"},
-        {"type": "down", "price": 1.525, "desc": "收盘跌破全清", "ref": "s3", "note": "剧本证伪线"}
+        {
+          "type": "up",
+          "price": 1.838,
+          "desc": "触及减1/3",
+          "ref": "s1",
+          "note": "52周高=历史套牢区"
+        },
+        {
+          "type": "down",
+          "price": 1.64,
+          "desc": "收盘跌破减半",
+          "ref": "S1",
+          "note": "二浪箱体下沿"
+        },
+        {
+          "type": "up",
+          "price": 1.64,
+          "desc": "收回=假破位翻案（观察，等B类确认再动）",
+          "ref": "b11",
+          "note": "对应减半线"
+        },
+        {
+          "type": "down",
+          "price": 1.525,
+          "desc": "收盘跌破全清",
+          "ref": "s3",
+          "note": "剧本证伪线"
+        }
       ]
     },
     {
-      "code": "sz159516", "name": "半导体设备ETF", "cost": 0.718,
+      "code": "sz159516",
+      "name": "半导体设备ETF",
+      "cost": 0.718,
       "levels": [
-        {"type": "up", "price": 0.700, "desc": "反弹减1/3", "ref": "s1", "note": "MA20+8月平台下沿"},
-        {"type": "down", "price": 0.630, "desc": "收盘跌破全清", "ref": "S1", "note": "低点抬高结构线"},
-        {"type": "up", "price": 0.630, "desc": "收回=假破位翻案（观察，等确认）", "ref": "b11", "note": "对应全清线"}
+        {
+          "type": "up",
+          "price": 0.7,
+          "desc": "反弹减1/3",
+          "ref": "s1",
+          "note": "MA20+8月平台下沿"
+        },
+        {
+          "type": "down",
+          "price": 0.63,
+          "desc": "收盘跌破全清",
+          "ref": "S1",
+          "note": "低点抬高结构线"
+        },
+        {
+          "type": "up",
+          "price": 0.63,
+          "desc": "收回=假破位翻案（观察，等确认）",
+          "ref": "b11",
+          "note": "对应全清线"
+        }
       ]
     },
     {
-      "code": "sz000425", "name": "徐工机械", "cost": 9.516,
+      "code": "sz000425",
+      "name": "徐工机械",
+      "cost": 9.516,
       "levels": [
-        {"type": "up", "price": 7.590, "desc": "缩量滞涨再减半,放量站上转持有", "ref": "s1/B2", "note": "MA20=空头反弹天花板"},
-        {"type": "down", "price": 7.050, "desc": "跌破减半", "ref": "S1", "note": "本轮反弹起点"},
-        {"type": "down", "price": 6.970, "desc": "跌破全清", "ref": "S1", "note": "9/29割肉潮最低价"}
+        {
+          "type": "up",
+          "price": 7.59,
+          "desc": "缩量滞涨再减半,放量站上转持有",
+          "ref": "s1/B2",
+          "note": "MA20=空头反弹天花板"
+        },
+        {
+          "type": "down",
+          "price": 7.05,
+          "desc": "跌破减半",
+          "ref": "S1",
+          "note": "本轮反弹起点"
+        },
+        {
+          "type": "down",
+          "price": 6.97,
+          "desc": "跌破全清",
+          "ref": "S1",
+          "note": "9/29割肉潮最低价"
+        }
       ]
     },
     {
-      "code": "sh600469", "name": "风神股份", "cost": 6.401,
+      "code": "sh600469",
+      "name": "风神股份",
+      "cost": 6.401,
       "levels": [
-        {"type": "up", "price": 5.000, "desc": "反弹减半", "ref": "s2", "note": "前低+平台下沿"},
-        {"type": "up", "price": 5.300, "desc": "放量站上才谈持有", "ref": "B2", "note": "需量比1.8确认"},
-        {"type": "down", "price": 4.870, "desc": "跌破全清", "ref": "S1", "note": "本轮最低"},
-        {"type": "up", "price": 4.870, "desc": "收回=假破位嫌疑（观察，3天内可接回）", "ref": "b11", "note": "对应全清线"}
+        {
+          "type": "up",
+          "price": 5.0,
+          "desc": "反弹减半",
+          "ref": "s2",
+          "note": "前低+平台下沿"
+        },
+        {
+          "type": "up",
+          "price": 5.3,
+          "desc": "放量站上才谈持有",
+          "ref": "B2",
+          "note": "需量比1.8确认"
+        },
+        {
+          "type": "down",
+          "price": 4.87,
+          "desc": "跌破全清",
+          "ref": "S1",
+          "note": "本轮最低"
+        },
+        {
+          "type": "up",
+          "price": 4.87,
+          "desc": "收回=假破位嫌疑（观察，3天内可接回）",
+          "ref": "b11",
+          "note": "对应全清线"
+        }
       ]
     },
     {
-      "code": "sh512880", "name": "证券ETF", "skip_pos": true,
+      "code": "sh512880",
+      "name": "证券ETF",
+      "skip_pos": true,
       "levels": []
     },
     {
-      "code": "sz002738", "name": "中矿资源（观察票）", "skip_pos": true,
+      "code": "sz002738",
+      "name": "中矿资源（观察票）",
+      "skip_pos": true,
       "levels": [
-        {"type": "up", "price": 40.250, "desc": "站回=假破位翻案,重新观察", "ref": "b11", "note": "10/12已跌破过"},
-        {"type": "up", "price": 42.500, "desc": "放量站上=买点候选", "ref": "B2", "note": "需量比确认"}
+        {
+          "type": "up",
+          "price": 40.25,
+          "desc": "站回=假破位翻案,重新观察",
+          "ref": "b11",
+          "note": "10/12已跌破过"
+        },
+        {
+          "type": "up",
+          "price": 42.5,
+          "desc": "放量站上=买点候选",
+          "ref": "B2",
+          "note": "需量比确认"
+        }
       ]
     }
-  ]
+  ],
+  "mail": {
+    "user": "377243283@qq.com",
+    "pass": "dflcnhligstfcaeh",
+    "to": "377243283@qq.com",
+    "_说明": "推送兜底通道：PushPlus 之外再发一封邮件到 QQ 邮箱（仓库私有，勿外传）"
+  }
 }
