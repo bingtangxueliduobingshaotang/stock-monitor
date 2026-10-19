@@ -11,6 +11,7 @@ r"""
 推送: PushPlus（token 取自环境变量 PUSHPLUS_TOKEN，或 config.json 的 pushplus_token）
 """
 import json
+import random
 import os
 import sys
 import urllib.request
@@ -238,6 +239,17 @@ def push(title, content):
         return
     st = load_state()
     st["count"] = st.get("count", 0) + 1
+    # P2 失败感知：30 分钟内连发时，开头补上一条要点（防上一条延迟/未达）
+    log = st.get("push_log") or []
+    if log:
+        last = log[-1]
+        dt = datetime.datetime.now(BJ) - datetime.datetime.fromisoformat(last["ts"])
+        if dt.total_seconds() < 1800 and last.get("brief"):
+            content = ("⚠️ 上一条 %s 的推送可能延迟或未送达，要点回顾：\n> %s\n\n---\n\n"
+                       % (last["time"], last["brief"])) + content
+    st["push_log"] = (log + [{"ts": datetime.datetime.now(BJ).isoformat(timespec="seconds"),
+                              "time": datetime.datetime.now(BJ).strftime("%H:%M"),
+                              "title": title, "brief": content.split("\n")[0][:80]}])[-5:]
     save_state(st)
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
@@ -1078,6 +1090,8 @@ def build_monitor():
 # ---------------- 入口 ----------------
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "intraday"
+    # P1 防限流：随机抖动 0~20s，避开与其它任务的整点碰撞
+    time.sleep(random.uniform(0, 20))
     now = datetime.datetime.now(BJ).strftime("%m-%d %H:%M")
     try:
         if not is_trading_day():
@@ -1093,6 +1107,10 @@ if __name__ == "__main__":
         elif mode == "close":
             push("【收盘复盘+明日预案】" + now, build_close())
         elif mode == "monitor":
+            hm = datetime.datetime.now(BJ).strftime("%H:%M")
+            if "09:25" <= hm <= "09:36":
+                print("[%s] 早盘盯防窗口（09:25-09:36）告警静默，避免与盯防连发" % hm)
+                sys.exit(0)
             content = build_monitor()
             if content:
                 push("【触发告警】" + now, content)
