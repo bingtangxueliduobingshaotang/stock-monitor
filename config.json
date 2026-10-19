@@ -194,11 +194,5 @@
         }
       ]
     }
-  ],
-  "mail": {
-    "user": "377243283@qq.com",
-    "pass": "dflcnhligstfcaeh",
-    "to": "377243283@qq.com",
-    "_说明": "推送兜底通道：PushPlus 之外再发一封邮件到 QQ 邮箱（仓库私有，勿外传）"
-  }
+  ]
 }
