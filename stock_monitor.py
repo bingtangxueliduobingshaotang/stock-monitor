@@ -274,7 +274,7 @@ def push(title, content):
     try:
         r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
         code, msg = r.get("code"), r.get("msg")
-        print("PUSH:", code, msg)
+        print("PUSH:", code, msg, "| data=", str(r.get("data"))[:120])
     except Exception as e:
         print("PUSH ERR:", str(e)[:80])
     # 邮件兜底（PushPlus 不可靠时保证送达）
