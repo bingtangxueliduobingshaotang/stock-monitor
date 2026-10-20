@@ -1112,9 +1112,31 @@ if __name__ == "__main__":
             if "09:25" <= hm <= "09:36":
                 print("[%s] 早盘盯防窗口（09:25-09:36）告警静默，避免与盯防连发" % hm)
                 sys.exit(0)
+            # 用户规则(2026-10-20)：若上次告警落在对策前30分钟窗口，则抑制到"对策+30分钟"后再检查
+            _st_hold = load_state()
+            _hold = _st_hold.get("alert_hold_until")
+            if _hold:
+                try:
+                    if datetime.datetime.now(BJ) < datetime.datetime.fromisoformat(_hold):
+                        print("[%s] 告警保持期(至 %s)：对策已提前覆盖，静默" % (hm, _hold[11:16]))
+                        sys.exit(0)
+                except Exception:
+                    pass
             content = build_monitor()
             if content:
                 push("【触发告警】" + now, content)
+                # 若本次告警发生在对策前30分钟窗口(10:00-10:29 / 13:30-13:59)，下次检查=对策+30分钟
+                _now = datetime.datetime.now(BJ)
+                for _plan, _hold_hm in ((("10", "00"), ("11", "00")), (("13", "30"), ("14", "30"))):
+                    _s = _now.replace(hour=int(_plan[0]), minute=int(_plan[1]), second=0)
+                    _e = _s + datetime.timedelta(minutes=30)
+                    if _s <= _now < _e:
+                        _st2 = load_state()
+                        _st2["alert_hold_until"] = _now.replace(hour=int(_hold_hm[0]),
+                                                                minute=int(_hold_hm[1])).isoformat()
+                        save_state(_st2)
+                        print("对策前已提前报送，下次告警检查推迟到 %s:00" % ":".join(_hold_hm))
+                        break
         else:
             print("未知模式:", mode)
     except Exception:
