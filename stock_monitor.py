@@ -1192,12 +1192,13 @@ if __name__ == "__main__":
                 st_m = load_state()
                 st_m["last_alert_ts"] = datetime.datetime.now(BJ).isoformat()
                 _now = datetime.datetime.now(BJ)
-                for _ph, _nu in ((10, 11), (13, 14)):
-                    if _now.hour == _ph:
-                        st_m["defer_until"] = _now.replace(hour=_nu, minute=0).isoformat()
+                # 仅"对策前 30 分钟内"才顺延：10:00-10:29 → 11:00；13:30-13:59 → 14:30
+                for _h, _m0, _m1, _nu in ((10, 0, 30, 11), (13, 30, 60, 14)):
+                    if _now.hour == _h and _m0 <= _now.minute < _m1:
+                        st_m["defer_until"] = _now.replace(hour=_nu, minute=0, second=0).isoformat()
                         st_m["deferred_pushed"] = False
                         save_state(st_m)
-                        print("对策前已提前报送，%02d:30 对策顺延至 %02d:00" % (_ph, _nu))
+                        print("对策前已提前报送，对策顺延至 %02d:00" % _nu)
                         break
         else:
             print("未知模式:", mode)
