@@ -95,7 +95,7 @@ def is_trading_day():
 
 def in_window(mode, t=None):
     """有效时段守卫（北京时间）：防止延迟触发的班次在盘后乱推（误导性信号）。
-    用户 2026-10-20 定：monitor 窗口=9:15-16:00（A 股含集合竞价 + 港股到收盘）；
+    用户 2026-10-20 定（最终版）：monitor 窗口=9:15-11:30 或 13:00-15:00（A股+集合竞价，午休静默）；
     intraday 对策照旧 9:25-15:05；close: 15:00-23:59；其余一律静默。"""
     if t is None:
         _n = datetime.datetime.now(BJ)
@@ -103,7 +103,7 @@ def in_window(mode, t=None):
     if mode == "morning":
         return 915 <= t <= 940
     if mode == "monitor":
-        return 915 <= t <= 1600
+        return (915 <= t <= 1130) or (1300 <= t <= 1500)
     if mode == "intraday":
         return 925 <= t <= 1505
     if mode == "close":
