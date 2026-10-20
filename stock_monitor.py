@@ -1104,6 +1104,19 @@ if __name__ == "__main__":
         if mode == "morning":
             push("【今日盯防】" + now, build_morning())
         elif mode == "intraday":
+            hm = datetime.datetime.now(BJ).strftime("%H:%M")
+            st_i = load_state()
+            du = st_i.get("defer_until")
+            if du:
+                try:
+                    ddt = datetime.datetime.fromisoformat(du)
+                    if ddt.tzinfo is None:
+                        ddt = ddt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                    if datetime.datetime.now(BJ) < ddt and ddt.date() == datetime.datetime.now(BJ).date():
+                        print("[%s] 本班对策已顺延至 %s（此前有提前告警），静默" % (hm, ddt.strftime("%H:%M")))
+                        sys.exit(0)
+                except Exception:
+                    pass
             push("【策略池对策】" + now, build_intraday(now))
         elif mode == "close":
             push("【收盘复盘+明日预案】" + now, build_close())
@@ -1112,33 +1125,49 @@ if __name__ == "__main__":
             if "09:25" <= hm <= "09:36":
                 print("[%s] 早盘盯防窗口（09:25-09:36）告警静默，避免与盯防连发" % hm)
                 sys.exit(0)
-            # 用户规则(2026-10-20)：若上次告警落在对策前30分钟窗口，则抑制到"对策+30分钟"后再检查
-            _st_hold = load_state()
-            _hold = _st_hold.get("alert_hold_until")
-            if _hold:
+            st_m = load_state()
+            du = st_m.get("defer_until")
+            if du:
                 try:
-                    _hdt = datetime.datetime.fromisoformat(_hold)
-                    if _hdt.tzinfo is None:
-                        _hdt = _hdt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
-                    if datetime.datetime.now(BJ) < _hdt:
-                        print("[%s] 告警保持期(至 %s)：对策已提前覆盖，静默" % (hm, _hdt.strftime("%H:%M")))
-                        sys.exit(0)
+                    ddt = datetime.datetime.fromisoformat(du)
+                    if ddt.tzinfo is None:
+                        ddt = ddt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                    if ddt.date() == datetime.datetime.now(BJ).date():
+                        if datetime.datetime.now(BJ) < ddt:
+                            print("[%s] 对策已顺延至 %s，期间告警静默（异动由顺延对策统一覆盖）" % (hm, ddt.strftime("%H:%M")))
+                            sys.exit(0)
+                        if not st_m.get("deferred_pushed"):
+                            push("【策略池对策·顺延】" + now, build_intraday("顺延 %s" % ddt.strftime("%H:%M")))
+                            st_m["deferred_pushed"] = True
+                            save_state(st_m)
+                            print("顺延对策已推")
+                            sys.exit(0)
                 except Exception:
                     pass
             content = build_monitor()
             if content:
+                la = st_m.get("last_alert_ts")
+                if la:
+                    try:
+                        _la = datetime.datetime.fromisoformat(la)
+                        if _la.tzinfo is None:
+                            _la = _la.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                        _gap = (datetime.datetime.now(BJ) - _la).total_seconds()
+                        if _gap < 1200:
+                            print("[%s] 距上次播报 %d 分钟（<20），静默" % (hm, int(_gap // 60)))
+                            sys.exit(0)
+                    except Exception:
+                        pass
                 push("【触发告警】" + now, content)
-                # 若本次告警发生在对策前30分钟窗口(10:00-10:29 / 13:30-13:59)，下次检查=对策+30分钟
+                st_m = load_state()
+                st_m["last_alert_ts"] = datetime.datetime.now(BJ).isoformat()
                 _now = datetime.datetime.now(BJ)
-                for _plan, _hold_hm in ((("10", "00"), ("11", "00")), (("13", "30"), ("14", "30"))):
-                    _s = _now.replace(hour=int(_plan[0]), minute=int(_plan[1]), second=0)
-                    _e = _s + datetime.timedelta(minutes=30)
-                    if _s <= _now < _e:
-                        _st2 = load_state()
-                        _st2["alert_hold_until"] = _now.replace(hour=int(_hold_hm[0]),
-                                                                minute=int(_hold_hm[1])).isoformat()
-                        save_state(_st2)
-                        print("对策前已提前报送，下次告警检查推迟到 %s:00" % ":".join(_hold_hm))
+                for _ph, _nu in ((10, 11), (13, 14)):
+                    if _now.hour == _ph:
+                        st_m["defer_until"] = _now.replace(hour=_nu, minute=0).isoformat()
+                        st_m["deferred_pushed"] = False
+                        save_state(st_m)
+                        print("对策前已提前报送，%02d:30 对策顺延至 %02d:00" % (_ph, _nu))
                         break
         else:
             print("未知模式:", mode)
