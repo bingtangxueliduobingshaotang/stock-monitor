@@ -1117,8 +1117,11 @@ if __name__ == "__main__":
             _hold = _st_hold.get("alert_hold_until")
             if _hold:
                 try:
-                    if datetime.datetime.now(BJ) < datetime.datetime.fromisoformat(_hold):
-                        print("[%s] 告警保持期(至 %s)：对策已提前覆盖，静默" % (hm, _hold[11:16]))
+                    _hdt = datetime.datetime.fromisoformat(_hold)
+                    if _hdt.tzinfo is None:
+                        _hdt = _hdt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                    if datetime.datetime.now(BJ) < _hdt:
+                        print("[%s] 告警保持期(至 %s)：对策已提前覆盖，静默" % (hm, _hdt.strftime("%H:%M")))
                         sys.exit(0)
                 except Exception:
                     pass
