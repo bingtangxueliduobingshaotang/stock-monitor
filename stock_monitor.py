@@ -1027,9 +1027,9 @@ def build_monitor():
                 st, fired = level_status(mkrt["price"], lv)
                 if fired and key not in state["fired"]:
                     state["fired"].append(key)
-                    alerts.append("🔴 <font color=\"red\">**【上证指数】现价 %.2f %s %.2f**</font>\n**动作：%s**（【%s】）" % (
+                    alerts.append(("🔴 <font color=\"red\">**【上证指数】现价 %.2f %s %.2f**</font>\n**动作：%s**（【%s】）" % (
                         mkrt["price"], "上破" if lv["type"] == "up" else "跌破",
-                        lv["price"], lv["desc"], lv.get("ref", "")))
+                        lv["price"], lv["desc"], lv.get("ref", "")), key, "market|level|" + lv["type"]))
             save_state(state)
     except Exception:
         pass
@@ -1043,7 +1043,7 @@ def build_monitor():
             if bkrt["price"] < ma5 * 0.995:
                 if key not in state["fired"]:
                     state["fired"].append(key)
-                    alerts.append("🔵 【中证银行】现价 %.2f **跌破 5 日线**（MA5 %.2f）\n**小寒右侧信号出现**：资金或开始从防御切换——关注科技/证券承接（Q8 框架）" % (bkrt["price"], ma5))
+                    alerts.append(("🔵 【中证银行】现价 %.2f **跌破 5 日线**（MA5 %.2f）\n**小寒右侧信号出现**：资金或开始从防御切换——关注科技/证券承接（Q8 框架）" % (bkrt["price"], ma5), key, "bank|ma5"))
             else:
                 if key in state["fired"]:
                     state["fired"].remove(key)
@@ -1061,9 +1061,10 @@ def build_monitor():
             st, fired = level_status(r["price"], lv)
             if fired and key not in state["fired"]:
                 state["fired"].append(key)
-                alerts.append("🔴 <font color=\"red\">**【%s】现价 %.3f %s关键位 %.3f**</font>\n**动作：%s**（%s【%s】）" % (
+                alerts.append(("🔴 <font color=\"red\">**【%s】现价 %.3f %s关键位 %.3f**</font>\n**动作：%s**（%s【%s】）" % (
                     name, r["price"], "跌破" if lv["type"] == "down" else "上破",
-                    lv["price"], lv["desc"], lv.get("note", ""), lv.get("ref", "")))
+                    lv["price"], lv["desc"], lv.get("note", ""), lv.get("ref", "")),
+                    key, "%s|level|%s" % (code, lv["type"])))
         # 2) 日线信号（盘中动态K线）
         try:
             sg = signals(kline(code))
@@ -1078,14 +1079,40 @@ def build_monitor():
                 act = "买入信号" if no.startswith("B") else "卖出信号"
                 if no.startswith("B") and sg["kong"]:
                     act += "（但空头排列，只观察不执行）"
-                alerts.append("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）" % (
-                    name, act, no, desc, r["price"], r["chg"]))
+                alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）" % (
+                    name, act, no, desc, r["price"], r["chg"]), key, "%s|sig" % code))
     save_state(state)
     if not alerts:
         print("无新触发")
         return None
+    # 语义去重（用户 2026-10-20 定：不能连续两次播报同一个意思）：同标的同方向 60 分钟内只报一次
+    sem = state.setdefault("semantic", {})
+    _now = datetime.datetime.now(BJ)
+    final = []
+    for _a in alerts:
+        _text, _key, _sk = _a
+        _ok = True
+        _ts = sem.get(_sk)
+        if _ts:
+            try:
+                _dt = datetime.datetime.fromisoformat(_ts)
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                if (_now - _dt).total_seconds() < 3600:
+                    _ok = False
+                    if _key in state["fired"]:
+                        state["fired"].remove(_key)   # 撤回精确标记，60 分钟后仍触发可再报
+            except Exception:
+                pass
+        if _ok:
+            sem[_sk] = _now.isoformat()
+            final.append(_text)
+    save_state(state)
+    if not final:
+        print("语义去重后无新触发（60 分钟内同标的同方向已报过）")
+        return None
     t = datetime.datetime.now(BJ).strftime("%H:%M")
-    return "## 触发告警 %s\n\n" % t + "\n\n---\n\n".join(alerts)
+    return "## 触发告警 %s\n\n" % t + "\n\n---\n\n".join(final)
 
 
 # ---------------- 入口 ----------------
