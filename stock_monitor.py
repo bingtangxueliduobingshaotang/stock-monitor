@@ -972,6 +972,22 @@ def track_picks():
             still.append(p)
     pf["active"] = still
     save_picks(pf)
+    # 月度胜率（用户 2026-10-21 要求）：按"体系款/打板款"分别统计满 5 日标的
+    try:
+        month = today[:7]
+        stat = {}
+        for p in (pf.get("done", []) + still):
+            if len(p.get("log", [])) >= 5 and p.get("date", "")[:7] == month:
+                k = p.get("kind", "?")
+                w, t = stat.get(k, (0, 0))
+                stat[k] = (w + (1 if p["log"][4][2] > 0 else 0), t + 1)
+        if stat:
+            segs = []
+            for k, (w, t) in stat.items():
+                segs.append("%s %d/%d（%.0f%%）" % (k, w, t, 100.0 * w / t))
+            lines.append("- **📈 本月胜率**：" + " ｜ ".join(segs))
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
