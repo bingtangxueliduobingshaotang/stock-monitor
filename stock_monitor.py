@@ -1098,6 +1098,26 @@ def build_monitor():
         save_state(state)
     except Exception:
         pass
+    # 小盘/游资信号（强龙：微盘股创新高+高标=游资在场；微盘无公开指数，用中证1000代理）
+    try:
+        _kb = kline("sh000852", 30)
+        _qz = realtime(["sh000852"]).get("sh000852")
+        if _qz and len(_kb) >= 21:
+            _hi = max(b[3] for b in _kb[-21:-1])
+            _lo = min(b[4] for b in _kb[-21:-1])
+            if _qz["price"] > _hi:
+                _k = "small|newhigh"
+                if _k not in state["fired"]:
+                    state["fired"].append(_k)
+                    alerts.append(("🟡 【中证1000】%.2f **创 20 日新高**（前高 %.2f，%+.2f%%）\n**强龙口径**：小盘创新高=游资在做（机构没动）→ 题材活跃期，可跟强势股；但别追高" % (_qz["price"], _hi, _qz["chg"]), _k, "small|newhigh"))
+            elif _qz["price"] < _lo:
+                _k = "small|newlow"
+                if _k not in state["fired"]:
+                    state["fired"].append(_k)
+                    alerts.append(("🔵 【中证1000】%.2f **创 20 日新低**（前低 %.2f，%+.2f%%）\n游资退潮/小盘杀跌 → 题材退潮期，仓位往权重靠" % (_qz["price"], _lo, _qz["chg"]), _k, "small|newlow"))
+            save_state(state)
+    except Exception:
+        pass
     # 量能分档（b26 多口径）：11:00 / 14:00 检查两市成交额，跨档提示一次
     try:
         _hm = datetime.datetime.now(BJ).strftime("%H:%M")
