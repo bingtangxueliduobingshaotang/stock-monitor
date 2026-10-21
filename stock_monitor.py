@@ -247,28 +247,22 @@ def _ref_ok(state, limit=2):
 
 
 def save_archive(kind, content):
-    """把复盘/周报存档到 GitHub repo 的 复盘归档/ 目录（用户 2026-10-21 要求）。
-    没有 GH_TOKEN（本地跑）时静默跳过。"""
-    tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    repo = os.environ.get("GH_REPO") or "bingtangxueliduobingshaotang/stock-monitor"
-    if not tok:
-        print("ARCHIVE: 无 GH_TOKEN，跳过存档")
-        return
+    """复盘存档（用户 2026-10-21 要求）。
+    方案：①本地写 复盘归档/日期_类型.md ②在 Actions 里把正文打进日志（带标记，日志保留 90 天可回捞）。
+    注：直接写 repo 需要 workflow 写权限，当前 PAT 无该权限，故用此方案。"""
+    day = datetime.datetime.now(BJ).strftime("%Y-%m-%d")
+    fn = "%s_%s.md" % (day, kind)
     try:
-        import base64
-        day = datetime.datetime.now(BJ).strftime("%Y-%m-%d")
-        name = "%s_%s.md" % (day, kind)
-        url = "https://api.github.com/repos/%s/contents/%s" % (repo, "复盘归档/" + name)
-        body = json.dumps({"message": "archive %s %s" % (kind, day),
-                           "content": base64.b64encode(content.encode("utf-8")).decode()}).encode()
-        req = urllib.request.Request(url, data=body, method="PUT",
-                                     headers={"Authorization": "Bearer " + tok,
-                                              "Accept": "application/vnd.github+json",
-                                              "Content-Type": "application/json"})
-        r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
-        print("ARCHIVE OK:", r.get("content", {}).get("path"))
+        d = os.path.join(os.path.dirname(os.path.dirname(STATE_FILE)), "复盘归档")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, fn), "w", encoding="utf-8") as f:
+            f.write("# %s %s\n\n%s\n" % (day, kind, content))
+        print("ARCHIVE LOCAL OK:", fn)
     except Exception as e:
-        print("ARCHIVE FAIL:", str(e)[:80])
+        print("ARCHIVE LOCAL FAIL:", str(e)[:60])
+    print("===ARCHIVE-BODY-BEGIN %s===" % fn)
+    print(content)
+    print("===ARCHIVE-BODY-END %s===" % fn)
 
 
 def push(title, content):
