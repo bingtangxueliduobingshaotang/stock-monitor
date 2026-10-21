@@ -571,12 +571,55 @@ def build_week():
         lines.append("- 本周触发信号类别：%s" % ("、".join(sorted({f.split("|")[0] for f in fired})) or "无"))
     except Exception:
         pass
-    lines += ["", "### 四、教学点（本周最该记住的 3 条）"]
+    # 四、死扛不动 vs 按体系做（用户 2026-10-21 要求：每周对比，检验体系有效性）
+    lines += ["", "### 四、死扛不动 vs 按体系做（本周模拟）", ""]
+    _bh_sum, _sys_sum, _rows = 0.0, 0.0, []
+    for _item in POOL:
+        try:
+            _ks = kline(_item["code"], 15)
+            _seg = [b for b in _ks if b[0] >= monday]
+            if len(_seg) < 2:
+                continue
+            _buy = _seg[0][2]
+            _bh = (_seg[-1][2] / _buy - 1) * 100
+            _pos, _eq, _prev, _notes = 1.0, 1.0, _buy, []
+            for _b in _seg:
+                if _prev:
+                    _eq *= (1 + _pos * (_b[2] / _prev - 1))
+                _prev = _b[2]
+                for _lv in _item.get("levels", []):
+                    _p, _t = float(_lv["price"]), _lv["type"]
+                    _dsc = _lv.get("desc", "")
+                    if _t == "down" and _b[2] < _p and _pos > 0:
+                        _np = 0.0 if "全清" in _dsc else 0.5
+                        if _np < _pos:
+                            _notes.append("%s破%.3f%s" % (_b[0][5:], _p, "清" if _np == 0 else "减半"))
+                            _pos = _np
+                    elif _t == "up" and _b[2] >= _p and _pos < 1.0:
+                        _notes.append("%s站上%.3f回满" % (_b[0][5:], _p))
+                        _pos = 1.0
+            _sy = (_eq - 1) * 100
+            _bh_sum += _bh
+            _sys_sum += _sy
+            _rows.append("- **%s**：死扛 %+.2f%% ｜ 体系 %+.2f%%%s" % (
+                _item["name"], _bh, _sy, ("（" + "；".join(_notes) + "）") if _notes else "（本周无信号）"))
+        except Exception:
+            pass
+    if _rows:
+        _n = max(1, len(_rows))
+        lines += _rows
+        _diff = (_sys_sum - _bh_sum) / _n
+        lines += ["", "- **合计（等权）**：死扛 **%+.2f%%** ｜ 体系 **%+.2f%%** ｜ **体系%s %.2f 个百分点**" % (
+            _bh_sum / _n, _sys_sum / _n, "多赚" if _diff >= 0 else "少亏", abs(_diff))]
+    else:
+        lines.append("- 本周无完整日线数据，略")
+
+    lines += ["", "### 五、教学点（本周最该记住的 3 条）"]
     lines += ["1. **量能是唯一的确认**：1.4-1.5 万亿只能磨，1.7 万亿以上才有像样反弹（b26 三口径）",
               "2. **破位后的第一反抽通常不是底**：反抽≠反弹（b21）——先看能否收回 3724/3741",
               "3. **扣底=均线走平**：明日站上 N 天前收盘，均线才走平（4.5）——先算价再等收盘"]
     # 四、下周预案
-    lines += ["", "### 五、下周预案", ""]
+    lines += ["", "### 六、下周预案", ""]
     lines += ["- **第一防线 3674**（924 起点）：破了看 3650，再下 3600 分水岭",
               "- **上沿 3741**：收回 3724=假跌破第一条件，站上 3741=假跌破成立可分批接",
               "- **量能**：<1.2 万亿=只减不加；≥1.5 万亿=可做；≥1.7 万亿=放心做",
