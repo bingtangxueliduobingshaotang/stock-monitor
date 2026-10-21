@@ -237,6 +237,40 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 
 
 # ---------------- 推送层 ----------------
+def _ref_ok(state, limit=2):
+    """参考类信号（银行/券商/创业板/宁德/中证1000）当日降噪：每天最多 limit 条（用户 2026-10-21 定）"""
+    n = state.get("ref_cnt", 0)
+    if n >= limit:
+        return False
+    state["ref_cnt"] = n + 1
+    return True
+
+
+def save_archive(kind, content):
+    """把复盘/周报存档到 GitHub repo 的 复盘归档/ 目录（用户 2026-10-21 要求）。
+    没有 GH_TOKEN（本地跑）时静默跳过。"""
+    tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    repo = os.environ.get("GH_REPO") or "bingtangxueliduobingshaotang/stock-monitor"
+    if not tok:
+        print("ARCHIVE: 无 GH_TOKEN，跳过存档")
+        return
+    try:
+        import base64
+        day = datetime.datetime.now(BJ).strftime("%Y-%m-%d")
+        name = "%s_%s.md" % (day, kind)
+        url = "https://api.github.com/repos/%s/contents/%s" % (repo, "复盘归档/" + name)
+        body = json.dumps({"message": "archive %s %s" % (kind, day),
+                           "content": base64.b64encode(content.encode("utf-8")).decode()}).encode()
+        req = urllib.request.Request(url, data=body, method="PUT",
+                                     headers={"Authorization": "Bearer " + tok,
+                                              "Accept": "application/vnd.github+json",
+                                              "Content-Type": "application/json"})
+        r = json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
+        print("ARCHIVE OK:", r.get("content", {}).get("path"))
+    except Exception as e:
+        print("ARCHIVE FAIL:", str(e)[:80])
+
+
 def push(title, content):
     if not TOKEN:
         print("[WARN] 未配置 PUSHPLUS_TOKEN，跳过推送")
@@ -275,6 +309,7 @@ def load_state():
         s = {}
     if s.get("date") != today:
         s["fired"] = []
+        s["ref_cnt"] = 0        # 参考类信号当日计数（降噪用）
     if s.get("month") != month:
         s["count"] = 0
     s["date"] = today
@@ -499,6 +534,61 @@ def build_intraday(tag):
     else:
         lines.append("> 仓位口径：目标仓位=此刻该拿住的水平；动作行=今天做什么")
     return "\n".join(lines)
+
+
+def build_week():
+    """周复盘（周五 16:30）：本周表现 + 教学点 + 下周预案（用户 2026-10-21 定）"""
+    rt = realtime([i["code"] for i in POOL] + ["sh000001", "sz399006"])
+    mk = market_line()
+    today = datetime.datetime.now(BJ).date()
+    monday = (today - datetime.timedelta(days=today.weekday())).isoformat()
+    lines = ["## 本周复盘 + 下周预案（%s ~ %s）" % (monday[5:], today.isoformat()[5:]), ""]
+    if mk:
+        lines += [mk, ""]
+    # 一、本周大盘
+    lines += ["### 一、本周大盘", ""]
+    for code, name in (("sh000001", "上证"), ("sz399006", "创业板")):
+        try:
+            ks = kline(code, 8)
+            if len(ks) >= 6:
+                c0, c1 = ks[-6][2], ks[-1][2]
+                lines.append("- **%s** 周涨跌 **%+.2f%%**（%.2f → %.2f）" % (name, (c1 / c0 - 1) * 100, c0, c1))
+        except Exception:
+            pass
+    # 二、策略池本周表现
+    lines += ["", "### 二、策略池本周表现", ""]
+    for item in POOL:
+        try:
+            ks = kline(item["code"], 8)
+            r = rt.get(item["code"])
+            if len(ks) >= 6 and r:
+                w = (ks[-1][2] / ks[-6][2] - 1) * 100
+                lines.append("- **%s** 周 **%+.2f%%** ｜ 现 %.3f（%+.2f%%）" % (item["name"], w, r["price"], r["chg"]))
+        except Exception:
+            pass
+    # 三、本周信号与教学点
+    lines += ["", "### 三、本周信号统计", ""]
+    try:
+        st = load_state()
+        log = st.get("push_log") or []
+        wlog = [p for p in log if p.get("ts", "")[:10] >= monday]
+        lines.append("- 本周推送 **%d** 条（累计本月 %d 条）" % (len(wlog), st.get("count", 0)))
+        fired = st.get("fired", [])
+        lines.append("- 本周触发信号类别：%s" % ("、".join(sorted({f.split("|")[0] for f in fired})) or "无"))
+    except Exception:
+        pass
+    lines += ["", "### 四、教学点（本周最该记住的 3 条）"]
+    lines += ["1. **量能是唯一的确认**：1.4-1.5 万亿只能磨，1.7 万亿以上才有像样反弹（b26 三口径）",
+              "2. **破位后的第一反抽通常不是底**：反抽≠反弹（b21）——先看能否收回 3724/3741",
+              "3. **扣底=均线走平**：明日站上 N 天前收盘，均线才走平（4.5）——先算价再等收盘"]
+    # 四、下周预案
+    lines += ["", "### 五、下周预案", ""]
+    lines += ["- **第一防线 3674**（924 起点）：破了看 3650，再下 3600 分水岭",
+              "- **上沿 3741**：收回 3724=假跌破第一条件，站上 3741=假跌破成立可分批接",
+              "- **量能**：<1.2 万亿=只减不加；≥1.5 万亿=可做；≥1.7 万亿=放心做",
+              "- **纪律**：手上票三季报没出的别碰；破位先减不猜底（s6）"]
+    content = "\n".join(lines)
+    return content
 
 
 def build_close():
@@ -1058,7 +1148,8 @@ def build_monitor():
             if bkrt["price"] < ma5 * 0.995:
                 if key not in state["fired"]:
                     state["fired"].append(key)
-                    alerts.append(("🔵 【中证银行】现价 %.2f **跌破 5 日线**（MA5 %.2f）\n**小寒右侧信号出现**：资金或开始从防御切换——关注科技/证券承接（Q8 框架）" % (bkrt["price"], ma5), key, "bank|ma5"))
+                    if _ref_ok(state):
+                        alerts.append(("🔵 【中证银行】现价 %.2f **跌破 5 日线**（MA5 %.2f）\n**小寒右侧信号出现**：资金或开始从防御切换——关注科技/证券承接（Q8 框架）" % (bkrt["price"], ma5), key, "bank|ma5"))
             else:
                 if key in state["fired"]:
                     state["fired"].remove(key)
@@ -1077,17 +1168,20 @@ def build_monitor():
             if _ma5:
                 if _qb["price"] >= _ma5 and _k2 not in state["fired"]:
                     state["fired"].append(_k2)
-                    alerts.append(("🟡 【券商ETF】%.3f **站上 5 日线**（MA5 %.3f，%+.2f%%）\n**强龙口径**：券商动了=右侧信号（「等券商，定进退」）→ 看能否放量确认" % (_qb["price"], _ma5, _qb["chg"]), _k2, "broker|ma5"))
+                    if _ref_ok(state):
+                        alerts.append(("🟡 【券商ETF】%.3f **站上 5 日线**（MA5 %.3f，%+.2f%%）\n**强龙口径**：券商动了=右侧信号（「等券商，定进退」）→ 看能否放量确认" % (_qb["price"], _ma5, _qb["chg"]), _k2, "broker|ma5"))
                     if _k3 in state["fired"]:
                         state["fired"].remove(_k3)
                 elif _qb["price"] < _ma5 and _k3 not in state["fired"]:
                     state["fired"].append(_k3)
-                    alerts.append(("🔵 【券商ETF】%.3f **跌破 5 日线**（MA5 %.3f，%+.2f%%）\n风向标转弱：右侧信号消失，注意题材退潮" % (_qb["price"], _ma5, _qb["chg"]), _k3, "broker|ma5"))
+                    if _ref_ok(state):
+                        alerts.append(("🔵 【券商ETF】%.3f **跌破 5 日线**（MA5 %.3f，%+.2f%%）\n风向标转弱：右侧信号消失，注意题材退潮" % (_qb["price"], _ma5, _qb["chg"]), _k3, "broker|ma5"))
                     if _k2 in state["fired"]:
                         state["fired"].remove(_k2)
             if abs(_qb["chg"]) >= 1.5 and _k1 not in state["fired"]:
                 state["fired"].append(_k1)
-                alerts.append(("🟡 【券商ETF】异动 **%+.2f%%**（现 %.3f）\n**强龙：券商是风向标**——先看是不是它带头，再决定追不追" % (_qb["chg"], _qb["price"]), _k1, "broker|move"))
+                if _ref_ok(state):
+                    alerts.append(("🟡 【券商ETF】异动 **%+.2f%%**（现 %.3f）\n**强龙：券商是风向标**——先看是不是它带头，再决定追不追" % (_qb["chg"], _qb["price"]), _k1, "broker|move"))
             save_state(state)
     except Exception:
         pass
@@ -1100,7 +1194,8 @@ def build_monitor():
             _k = "cyb|drop"
             if _k not in state["fired"]:
                 state["fired"].append(_k)
-                alerts.append(("🔵 【创业板指】**%+.2f%%**（现 %.2f）\n小寒口径：**宁德带崩创业板**——先看宁王，再看题材；创业板破位，小票别硬扛" % (_cy["chg"], _cy["price"]), _k, "cyb|drop"))
+                if _ref_ok(state):
+                    alerts.append(("🔵 【创业板指】**%+.2f%%**（现 %.2f）\n小寒口径：**宁德带崩创业板**——先看宁王，再看题材；创业板破位，小票别硬扛" % (_cy["chg"], _cy["price"]), _k, "cyb|drop"))
         if _nd:
             _kn = kline("sz300750", 10)
             _nma = sum(b[2] for b in _kn[-5:]) / 5.0 if len(_kn) >= 5 else None
@@ -1108,7 +1203,8 @@ def build_monitor():
                 _k = "ningde|ma5|down"
                 if _k not in state["fired"]:
                     state["fired"].append(_k)
-                    alerts.append(("🔵 【宁德时代】%.2f **跌破 5 日线**（MA5 %.2f，%+.2f%%）\n创业板先行指标转弱（小寒：「宁德带崩创业板」）" % (_nd["price"], _nma, _nd["chg"]), _k, "ningde|ma5"))
+                    if _ref_ok(state):
+                        alerts.append(("🔵 【宁德时代】%.2f **跌破 5 日线**（MA5 %.2f，%+.2f%%）\n创业板先行指标转弱（小寒：「宁德带崩创业板」）" % (_nd["price"], _nma, _nd["chg"]), _k, "ningde|ma5"))
             elif _nma and "ningde|ma5|down" in state["fired"]:
                 state["fired"].remove("ningde|ma5|down")
         save_state(state)
@@ -1125,12 +1221,14 @@ def build_monitor():
                 _k = "small|newhigh"
                 if _k not in state["fired"]:
                     state["fired"].append(_k)
-                    alerts.append(("🟡 【中证1000】%.2f **创 20 日新高**（前高 %.2f，%+.2f%%）\n**强龙口径**：小盘创新高=游资在做（机构没动）→ 题材活跃期，可跟强势股；但别追高" % (_qz["price"], _hi, _qz["chg"]), _k, "small|newhigh"))
+                    if _ref_ok(state):
+                        alerts.append(("🟡 【中证1000】%.2f **创 20 日新高**（前高 %.2f，%+.2f%%）\n**强龙口径**：小盘创新高=游资在做（机构没动）→ 题材活跃期，可跟强势股；但别追高" % (_qz["price"], _hi, _qz["chg"]), _k, "small|newhigh"))
             elif _qz["price"] < _lo:
                 _k = "small|newlow"
                 if _k not in state["fired"]:
                     state["fired"].append(_k)
-                    alerts.append(("🔵 【中证1000】%.2f **创 20 日新低**（前低 %.2f，%+.2f%%）\n游资退潮/小盘杀跌 → 题材退潮期，仓位往权重靠" % (_qz["price"], _lo, _qz["chg"]), _k, "small|newlow"))
+                    if _ref_ok(state):
+                        alerts.append(("🔵 【中证1000】%.2f **创 20 日新低**（前低 %.2f，%+.2f%%）\n游资退潮/小盘杀跌 → 题材退潮期，仓位往权重靠" % (_qz["price"], _lo, _qz["chg"]), _k, "small|newlow"))
             save_state(state)
     except Exception:
         pass
@@ -1260,7 +1358,14 @@ if __name__ == "__main__":
                     pass
             push("【策略池对策】" + now, build_intraday(now))
         elif mode == "close":
-            push("【收盘复盘+明日预案】" + now, build_close())
+            if datetime.datetime.now(BJ).weekday() == 4:      # 周五 → 周复盘
+                _c = build_week()
+                push("【本周复盘+下周预案】" + now, _c)
+                save_archive("周复盘", _c)
+            else:
+                _c = build_close()
+                push("【收盘复盘+明日预案】" + now, _c)
+                save_archive("日复盘", _c)
         elif mode == "monitor":
             hm = datetime.datetime.now(BJ).strftime("%H:%M")
             if "09:25" <= hm <= "09:36":
