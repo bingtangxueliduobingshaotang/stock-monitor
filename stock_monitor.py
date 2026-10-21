@@ -243,14 +243,10 @@ def push(title, content):
         return
     st = load_state()
     st["count"] = st.get("count", 0) + 1
-    # P2 失败感知：30 分钟内连发时，开头补上一条要点（防上一条延迟/未达）
+    # 2026-10-21 用户反馈：删除"上一条可能未送达"提示（会造成"以为没推"的误判）。
+    # 次数与时间仍记入 push_log，需要核对时查日志即可。
+    st["last_push_ts"] = datetime.datetime.now(BJ).isoformat()
     log = st.get("push_log") or []
-    if log:
-        last = log[-1]
-        dt = datetime.datetime.now(BJ) - datetime.datetime.fromisoformat(last["ts"])
-        if dt.total_seconds() < 1800 and last.get("brief"):
-            content = ("⚠️ 上一条 %s 的推送可能延迟或未送达，要点回顾：\n> %s\n\n---\n\n"
-                       % (last["time"], last["brief"])) + content
     st["push_log"] = (log + [{"ts": datetime.datetime.now(BJ).isoformat(timespec="seconds"),
                               "time": datetime.datetime.now(BJ).strftime("%H:%M"),
                               "title": title, "brief": content.split("\n")[0][:80]}])[-5:]
@@ -1053,6 +1049,85 @@ def build_monitor():
             save_state(state)
     except Exception:
         pass
+    # 券商风向标（强龙：等券商，定进退）——券商 ETF 涨跌幅绝对值 ≥1.5% 或站上/跌破 5 日线
+    try:
+        _qb = realtime(["sh512000"]).get("sh512000")
+        if _qb:
+            _kb = kline("sh512000", 10)
+            _ma5 = sum(b[2] for b in _kb[-5:]) / 5.0 if len(_kb) >= 5 else None
+            _k1 = "broker|move"
+            _k2 = "broker|ma5|up"
+            _k3 = "broker|ma5|down"
+            if _ma5:
+                if _qb["price"] >= _ma5 and _k2 not in state["fired"]:
+                    state["fired"].append(_k2)
+                    alerts.append(("🟡 【券商ETF】%.3f **站上 5 日线**（MA5 %.3f，%+.2f%%）\n**强龙口径**：券商动了=右侧信号（「等券商，定进退」）→ 看能否放量确认" % (_qb["price"], _ma5, _qb["chg"]), _k2, "broker|ma5"))
+                    if _k3 in state["fired"]:
+                        state["fired"].remove(_k3)
+                elif _qb["price"] < _ma5 and _k3 not in state["fired"]:
+                    state["fired"].append(_k3)
+                    alerts.append(("🔵 【券商ETF】%.3f **跌破 5 日线**（MA5 %.3f，%+.2f%%）\n风向标转弱：右侧信号消失，注意题材退潮" % (_qb["price"], _ma5, _qb["chg"]), _k3, "broker|ma5"))
+                    if _k2 in state["fired"]:
+                        state["fired"].remove(_k2)
+            if abs(_qb["chg"]) >= 1.5 and _k1 not in state["fired"]:
+                state["fired"].append(_k1)
+                alerts.append(("🟡 【券商ETF】异动 **%+.2f%%**（现 %.3f）\n**强龙：券商是风向标**——先看是不是它带头，再决定追不追" % (_qb["chg"], _qb["price"]), _k1, "broker|move"))
+            save_state(state)
+    except Exception:
+        pass
+    # 创业板/宁德先行（小寒：宁德带崩创业板）
+    try:
+        _qm = realtime(["sz399006", "sz300750"])
+        _cy = _qm.get("sz399006")
+        _nd = _qm.get("sz300750")
+        if _cy and _cy["chg"] <= -1.5:
+            _k = "cyb|drop"
+            if _k not in state["fired"]:
+                state["fired"].append(_k)
+                alerts.append(("🔵 【创业板指】**%+.2f%%**（现 %.2f）\n小寒口径：**宁德带崩创业板**——先看宁王，再看题材；创业板破位，小票别硬扛" % (_cy["chg"], _cy["price"]), _k, "cyb|drop"))
+        if _nd:
+            _kn = kline("sz300750", 10)
+            _nma = sum(b[2] for b in _kn[-5:]) / 5.0 if len(_kn) >= 5 else None
+            if _nma and _nd["price"] < _nma:
+                _k = "ningde|ma5|down"
+                if _k not in state["fired"]:
+                    state["fired"].append(_k)
+                    alerts.append(("🔵 【宁德时代】%.2f **跌破 5 日线**（MA5 %.2f，%+.2f%%）\n创业板先行指标转弱（小寒：「宁德带崩创业板」）" % (_nd["price"], _nma, _nd["chg"]), _k, "ningde|ma5"))
+            elif _nma and "ningde|ma5|down" in state["fired"]:
+                state["fired"].remove("ningde|ma5|down")
+        save_state(state)
+    except Exception:
+        pass
+    # 量能分档（b26 多口径）：11:00 / 14:00 检查两市成交额，跨档提示一次
+    try:
+        _hm = datetime.datetime.now(BJ).strftime("%H:%M")
+        if _hm in ("11:00", "14:00"):
+            _raw = http_get("https://qt.gtimg.cn/q=sh000001,sz399001", gbk=True)
+            _amt = 0.0
+            for _line in _raw.strip().split(";"):
+                if '="' not in _line:
+                    continue
+                _p = _line.split('="')[1].strip('"').split("~")
+                if len(_p) > 37:
+                    try:
+                        _amt += float(_p[37]) * 10000  # 万元 → 元
+                    except Exception:
+                        pass
+            if _amt > 0:
+                _yi = _amt / 100000000.0
+                _tier = None
+                if _yi >= 17000:
+                    _tier = ("vol|tier|17", "🔥 量能 **%.2f 万亿** ≥ 1.7 万亿——达到小寒/饕餮的「能做」门槛" % (_yi / 10000))
+                elif _yi >= 15000:
+                    _tier = ("vol|tier|15", "⚡ 量能 **%.2f 万亿** ≥ 1.5 万亿（邹老师门槛）——够做，但没到 1.7" % (_yi / 10000))
+                elif _hm == "11:00" and _yi < 12000:
+                    _tier = ("vol|tier|low", "⚠️ 半日量能仅 **%.2f 万亿**——量能不足，今天大概率还是「磨」（b26）" % (_yi / 10000))
+                if _tier and _tier[0] not in state["fired"]:
+                    state["fired"].append(_tier[0])
+                    alerts.append(("📊 " + _tier[1], _tier[0], "vol|tier"))
+                    save_state(state)
+    except Exception:
+        pass
     for item in POOL:
         code, name = item["code"], item["name"]
         r = rt.get(code)
@@ -1176,7 +1251,7 @@ if __name__ == "__main__":
                     pass
             content = build_monitor()
             if content:
-                la = st_m.get("last_alert_ts")
+                la = st_m.get("last_push_ts") or st_m.get("last_alert_ts")
                 if la:
                     try:
                         _la = datetime.datetime.fromisoformat(la)
