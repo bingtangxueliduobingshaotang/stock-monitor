@@ -451,6 +451,55 @@ def gap_rule():
     return n, tip
 
 
+# ===== 止盈 / 不参与（2026-10-23 用户要求：行情好要提醒止盈，末期要提醒别追）=====
+def profit_signal():
+    """返回 [(级别, 文案)] —— 止盈与"别参与"的提醒
+    A. 情绪过热（涨停≥100 或 连板≥7）→ 分批止盈
+    B. 放量滞涨（量增≥30% 但指数涨幅<0.2%）→ 钱在出
+    C. 指数连涨≥4 天 → 逢高减
+    D. 极端过热（涨停≥120 且 连板≥8）→ 别参与
+    """
+    out = []
+    try:
+        sh = realtime(["sh000001"]).get("sh000001")
+        amt = market_amount()
+        se = sentiment()
+        zt, lb = se.get("zt"), se.get("max_lb", 0)
+        # 指数连涨天数
+        days_up = 0
+        try:
+            ks = kline("sh000001", 12)
+            for i in range(len(ks) - 1, 0, -1):
+                if ks[i][2] > ks[i - 1][2]:
+                    days_up += 1
+                else:
+                    break
+        except Exception:
+            pass
+        # 昨日成交额（用日线量×均价估算）
+        up_amt = None
+        try:
+            ks2 = kline("sh000001", 6)
+            if len(ks2) >= 2:
+                b = ks2[-2]
+                up_amt = b[5] * (b[2] + b[3] + b[4]) / 3 / 1e8 / 10000.0   # 万亿
+        except Exception:
+            pass
+        if zt is not None and (zt >= 100 or lb >= 7):
+            out.append(("hot", "🔥 【情绪过热】涨停 %d 家 / 最高 %d 连板 → **分批止盈**：涨得最猛的先减 1/3（s2）" % (zt, lb)))
+        if amt and up_amt and up_amt > 0 and sh:
+            grow = amt / up_amt - 1
+            if grow >= 0.30 and sh["chg"] < 0.2:
+                out.append(("stall", "⚠️ 【放量滞涨】量增 %.0f%% 但指数只涨 %.2f%% → **钱在出，不是钱在进**：逢高兑现，别加仓" % (grow * 100, sh["chg"])))
+        if days_up >= 4:
+            out.append(("run", "📈 【连涨 %d 天】→ **逢高减一档**：连涨越久越要防回踩（s2）" % days_up))
+        if zt is not None and zt >= 120 and lb >= 8:
+            out.append(("avoid", "🚫 【极端过热】涨停 %d 家 / %d 连板 → **这种时候不要参与**：热闹是给接盘的人看的，等回落再说" % (zt, lb)))
+    except Exception:
+        pass
+    return out
+
+
 def sentiment():
     """情绪指标（2026-10-23 建）：涨停/跌停家数 + 最高连板 + 涨停板块集中度
     数据源：东财涨停池/跌停池（push2ex），一次请求拿全"""
@@ -1504,6 +1553,16 @@ def build_monitor():
                 "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
                 "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
             save_state(state)
+    except Exception:
+        pass
+    # 止盈 / 别参与（用户 10-23：好行情要提醒止盈，末期要提醒别追）
+    try:
+        for _lvl, _msg in profit_signal():
+            _k = "pt|" + _lvl
+            if _k not in state["fired"]:
+                state["fired"].append(_k)
+                alerts.append((_msg, _k, "pt"))
+        save_state(state)
     except Exception:
         pass
     # 缺口三定律（周老师 10-23：第1个逃、第2个等、第3个加）
