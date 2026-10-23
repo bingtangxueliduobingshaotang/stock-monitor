@@ -238,19 +238,39 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 
 # ---------------- 推送层 ----------------
 # ===== 灵活性与动态门槛（2026-10-23 用户要求："灵活一点、举一反三"）=====
-_VOL_TABLE = [(3600, 1.7), (3700, 1.75), (3800, 1.8), (3900, 2.0), (4000, 2.1), (4200, 2.3), (4500, 2.6)]
+# 量能口径（2026-10-23 用户纠正：不能按点位线性外推，只能跟学习者积累样本）
+# 样本来源见 stock_helper/量能口径库.md；这里只放"最近一次学到的口径"
+_VOL_SAMPLES = [
+    # (点位档, 及格, 达标, 确认, 来源)
+    (3700, 1.7, 1.8, 1.9, "老刘/小寒/教主 10-21~10-23"),
+]
 
 
 def vol_threshold(price):
-    """点位 → 所需量能（万亿）。点位越高，需要的量越大（用户 10-23：4200 点 2 万亿都不够）"""
+    """当前点位对应的"及格"量能（万亿）。取点位上下 150 点内最近样本；无样本则用最近档并标注"""
     if not price:
         return 1.7
-    if price <= _VOL_TABLE[0][0]:
-        return _VOL_TABLE[0][1]
-    for (p1, v1), (p2, v2) in zip(_VOL_TABLE, _VOL_TABLE[1:]):
-        if p1 <= price <= p2:
-            return round(v1 + (v2 - v1) * (price - p1) / (p2 - p1), 2)
-    return _VOL_TABLE[-1][1]
+    best = None
+    for p, ok, good, conf, src in _VOL_SAMPLES:
+        d = abs(price - p)
+        if d <= 150 and (best is None or d < best[0]):
+            best = (d, ok)
+    if best:
+        return best[1]
+    # 无同档样本：用最近档，不臆造
+    near = min(_VOL_SAMPLES, key=lambda x: abs(price - x[0]))
+    return near[1]
+
+
+def vol_ref(price):
+    """返回 (及格, 达标, 确认, 来源, 是否同档) —— 推送文案直接引用，不自己算"""
+    if not price:
+        return 1.7, 1.8, 1.9, "默认", False
+    for p, ok, good, conf, src in _VOL_SAMPLES:
+        if abs(price - p) <= 150:
+            return ok, good, conf, src, True
+    near = min(_VOL_SAMPLES, key=lambda x: abs(price - x[0]))
+    return near[1], near[2], near[3], near[4], False
 
 
 def market_amount():
@@ -1435,8 +1455,13 @@ def build_monitor():
                 except Exception:
                     _need = 1.7
                 _tier = None
-                if _yi >= 17000:
-                    _tier = ("vol|tier|17", "🔥 量能 **%.2f 万亿** ≥ 1.7 万亿——达到小寒/饕餮的「能做」门槛" % (_yi / 10000))
+                _okv, _gdv, _cfv, _src, _same = vol_ref(_need and _shp["price"] if _shp else None)
+                if _yi >= _cfv * 10000:
+                    _tier = ("vol|tier|17", "🔥 量能 **%.2f 万亿** ≥ 确认级 %.1f 万亿（%s）——底部确认量" % (_yi / 10000, _cfv, _src))
+                elif _yi >= _gdv * 10000:
+                    _tier = ("vol|tier|18", "⚡ 量能 **%.2f 万亿** ≥ 达标 %.1f 万亿（%s）——可反攻" % (_yi / 10000, _gdv, _src))
+                elif _yi >= _okv * 10000:
+                    _tier = ("vol|tier|17", "🔥 量能 **%.2f 万亿** ≥ 及格 %.1f 万亿（%s）——能做" % (_yi / 10000, _okv, _src))
                 elif _yi >= 15000:
                     _tier = ("vol|tier|15", "⚡ 量能 **%.2f 万亿** ≥ 1.5 万亿（邹老师门槛）——够做，但没到 1.7" % (_yi / 10000))
                 elif _hm == "11:00" and _yi * 2 >= 17000:
