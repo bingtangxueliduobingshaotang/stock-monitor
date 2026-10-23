@@ -1665,8 +1665,16 @@ def build_monitor():
         _prev = state.get("regime")
         if _rn and _prev and _rn != _prev and "regime|move" not in state["fired"]:
             state["fired"].append("regime|move")
-            alerts.append(("🔄 【市场阶段迁移】**%s → %s·%s**\n%s｜**仓位上限 %d 成**\n证据：%s"
-                % (_prev, _rn, _rname, _rtip, _rpos, _rev), "regime|move", "regime"))
+            _SWITCH = {
+                (1, 3): "**防守 → 抄底**", (2, 3): "**防守 → 抄底**",
+                (3, 4): "**抄底 → 持有**", (4, 5): "**持有 → 趋势加仓**",
+                (5, 6): "**持有 → 分批止盈**", (6, 7): "**止盈 → 清仓**",
+                (7, 1): "**清仓 → 空仓防守**", (3, 1): "**抄底失败 → 退回防守**",
+                (4, 1): "**修复失败 → 退回防守**",
+            }
+            _sw = _SWITCH.get((_prev, _rn), "阶段切换")
+            alerts.append(("🔄 【市场阶段迁移 %s → %s·%s】\n**操作性质：%s**｜仓位上限 %d 成\n%s\n"
+                "> %s" % (_prev, _rn, _rname, _sw, _rpos, _rtip, _rev), "regime|move", "regime"))
         if _rn:
             state["regime"] = _rn
         save_state(state)
