@@ -324,6 +324,23 @@ def reverse_strong(code):
         return False, ""
 
 
+def attack_advice():
+    """大盘状态 + 攻防建议（用户 2026-10-23：预警里每天要有"该防守还是进攻"）"""
+    try:
+        n, name, tip, pos, ev = regime()
+        if not n:
+            return ""
+        if pos <= 3:
+            mode, adv = "防守", "防守为主：不加仓、不追高；有票的按关键位减，空仓的等信号"
+        elif pos <= 6:
+            mode, adv = "试探进攻", "可试探进攻：分批上、单票不重仓；涨一波先减，不恋战"
+        else:
+            mode, adv = "进攻", "进攻：趋势成立，回踩就买、拿住不动；只在跌破关键位时减"
+        return "**📍 大盘状态：%d·%s（%s）**｜仓位上限 %d 成\n> 今日对策：%s" % (n, name, mode, pos, adv)
+    except Exception:
+        return ""
+
+
 def regime():
     """返回 (阶段号, 名称, 一句话, 仓位上限成数, 判定证据)"""
     try:
@@ -1864,6 +1881,13 @@ def build_monitor():
     if not alerts:
         print("无新触发")
         return None
+    # 每条预警开头都带上"大盘状态 + 攻防建议"（用户 2026-10-23 要求）
+    try:
+        _adv = attack_advice()
+        if _adv:
+            alerts.insert(0, (_adv, "adv|" + str(datetime.datetime.now(BJ).strftime("%H%M")), "adv"))
+    except Exception:
+        pass
     # 语义去重（用户 2026-10-20 定：不能连续两次播报同一个意思）：同标的同方向 60 分钟内只报一次
     sem = state.setdefault("semantic", {})
     _now = datetime.datetime.now(BJ)
