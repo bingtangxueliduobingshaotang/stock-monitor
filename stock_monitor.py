@@ -324,6 +324,55 @@ def reverse_strong(code):
         return False, ""
 
 
+# ===== 量能节奏预警（2026-10-23 用户问：量以后会预警吗）=====
+def vol_pace():
+    """当前量能 vs 过去 5 日"同进度"量能，返回 (比值, 当前万亿, 推算全天万亿, 进度%)
+    盘中任意时刻可用：已过交易分钟 / 240 作为进度"""
+    try:
+        now = datetime.datetime.now(BJ)
+        hm = now.hour * 60 + now.minute
+        # 交易分钟：9:30-11:30 = 120 分钟；13:00-15:00 = 120 分钟
+        if 9 * 60 + 30 <= hm <= 11 * 60 + 30:
+            passed = hm - (9 * 60 + 30)
+        elif 13 * 60 <= hm <= 15 * 60:
+            passed = 120 + (hm - 13 * 60)
+        elif hm > 15 * 60:
+            passed = 240
+        else:
+            passed = 1
+        passed = max(1, min(240, passed))
+        prog = passed / 240.0
+        amt = market_amount()
+        if not amt:
+            return None, None, None, prog * 100
+        ks = kline("sh000001", 8)
+        if len(ks) < 6:
+            return None, amt, None, prog * 100
+        today_vol = ks[-1][5]
+        hist = ks[-6:-1]
+        avg_vol = sum(b[5] for b in hist) / 5.0
+        expect = avg_vol * prog
+        ratio = today_vol / expect if expect > 0 else None
+        return ratio, amt, amt / prog if prog > 0 else None, prog * 100
+    except Exception:
+        return None, None, None, 0
+
+
+# ===== 通知分级（2026-10-23 用户问：怎么优化通知）=====
+P0_TAGS = ("regime", "sent|ice", "sent|hot", "nt", "gap", "pt", "volpace", "adv")
+P2_TAGS = ("broker", "cyb", "ningde", "small", "bank", "vol|tier", "sent|sector")
+
+
+def alert_level(tag):
+    """P0=决策级（必推）；P2=参考级（限额）；其余 P1=执行级"""
+    t = tag or ""
+    if t in P0_TAGS or t.startswith(P0_TAGS):
+        return "P0"
+    if t in P2_TAGS or t.startswith(P2_TAGS):
+        return "P2"
+    return "P1"
+
+
 def attack_advice():
     """大盘状态 + 攻防建议（用户 2026-10-23：预警里每天要有"该防守还是进攻"）"""
     try:
@@ -374,10 +423,8 @@ def regime():
         d5 = (closes[-1] / closes[-6] - 1) * 100 if len(closes) >= 6 else 0
         # 放量滞涨
         stall = False
-        if len(ks) >= 2:
-            prev_amt = ks[-2][5] * (ks[-2][2] + ks[-2][3] + ks[-2][4]) / 3 / 1e8 / 10000.0
-            if prev_amt > 0 and amt > 0:
-                stall = (amt / prev_amt - 1 >= 0.30) and sh["chg"] < 0.2
+        if len(ks) >= 2 and ks[-2][5] > 0:
+            stall = (ks[-1][5] / ks[-2][5] - 1 >= 0.30) and sh["chg"] < 0.2
         ev = "MA5 %.0f/MA10 %.0f/MA20 %.0f｜量 %.2f万亿｜涨停 %s/跌停 %s/连板 %s｜连涨%d连跌%d｜5日%+.1f%%" % (
             ma5, ma10, ma20, amt, zt, dt, lb, up_days, down_days, d5)
         # —— 判定（从极端到常规）——
@@ -590,20 +637,18 @@ def profit_signal():
                     break
         except Exception:
             pass
-        # 昨日成交额（用日线量×均价估算）
-        up_amt = None
+        vol_grow = None
         try:
             ks2 = kline("sh000001", 6)
-            if len(ks2) >= 2:
-                b = ks2[-2]
-                up_amt = b[5] * (b[2] + b[3] + b[4]) / 3 / 1e8 / 10000.0   # 万亿
+            if len(ks2) >= 2 and ks2[-2][5] > 0:
+                vol_grow = ks2[-1][5] / ks2[-2][5] - 1
         except Exception:
             pass
         if zt is not None and (zt >= 100 or lb >= 7):
             out.append(("hot", "🔥 【情绪过热】涨停 %d 家 / 最高 %d 连板 → **分批止盈**：涨得最猛的先减 1/3（s2）" % (zt, lb)))
-        if amt and up_amt and up_amt > 0 and sh:
-            grow = amt / up_amt - 1
-            if grow >= 0.30 and sh["chg"] < 0.2:
+        if vol_grow is not None and sh and vol_grow >= 0.30 and sh["chg"] < 0.2:
+            grow = vol_grow
+            if True:
                 out.append(("stall", "⚠️ 【放量滞涨】量增 %.0f%% 但指数只涨 %.2f%% → **钱在出，不是钱在进**：逢高兑现，别加仓" % (grow * 100, sh["chg"])))
         if days_up >= 4:
             out.append(("run", "📈 【连涨 %d 天】→ **逢高减一档**：连涨越久越要防回踩（s2）" % days_up))
@@ -1676,6 +1721,29 @@ def build_monitor():
             save_state(state)
     except Exception:
         pass
+    # 量能节奏（5 个检查点：10:30 / 11:00 / 13:30 / 14:00 / 14:30）
+    try:
+        _hmz = datetime.datetime.now(BJ).strftime("%H:%M")
+        if _hmz in ("10:30", "11:00", "13:30", "14:00", "14:30"):
+            _ratio, _amt, _full, _pg = vol_pace()
+            if _ratio is not None:
+                _k = "volpace|" + _hmz
+                if _k not in state["fired"]:
+                    if _ratio >= 1.3:
+                        state["fired"].append(_k)
+                        alerts.append(("📊 【量能明显放大】当前 **%.2f 万亿**（进度 %.0f%%），"
+                            "比过去 5 日同期 **高 %.0f%%**，推算全天约 **%.2f 万亿**\n"
+                            "> 放量=资金在进，配合阶段判断：若是阶段 2→3，这就是反扑的燃料"
+                            % (_amt, _pg, (_ratio - 1) * 100, _full), _k, "volpace"))
+                    elif _ratio <= 0.7:
+                        state["fired"].append(_k)
+                        alerts.append(("📉 【量能明显萎缩】当前 **%.2f 万亿**（进度 %.0f%%），"
+                            "比过去 5 日同期 **低 %.0f%%**，推算全天约 **%.2f 万亿**\n"
+                            "> 缩量=没人接，别指望大涨；缩量下的反弹都是反抽"
+                            % (_amt, _pg, (1 - _ratio) * 100, _full), _k, "volpace"))
+                    save_state(state)
+    except Exception:
+        pass
     # 市场阶段迁移播报（状态机）
     try:
         _rn, _rname, _rtip, _rpos, _rev = regime()
@@ -1881,6 +1949,21 @@ def build_monitor():
     if not alerts:
         print("无新触发")
         return None
+    # 通知分级：P2 参考级单次最多 3 条、当日累计最多 6 条（用户 2026-10-23 要求优化通知）
+    try:
+        _p2 = [a for a in alerts if alert_level(a[2]) == "P2"]
+        _main = [a for a in alerts if alert_level(a[2]) != "P2"]
+        _p2_used = state.get("p2_cnt", 0)
+        _p2_keep = max(0, min(3, 6 - _p2_used))
+        if _p2:
+            _main += _p2[:_p2_keep]
+            if len(_p2) > _p2_keep:
+                _main.append(("…另有 %d 条参考信号（%s）未展开，避免刷屏" % (
+                    len(_p2) - _p2_keep, "、".join(a[2].split("|")[0] for a in _p2[_p2_keep:])), "p2cut|" + str(len(_p2)), "P2CUT"))
+            state["p2_cnt"] = _p2_used + len(_p2[:_p2_keep])
+        alerts = _main
+    except Exception:
+        pass
     # 每条预警开头都带上"大盘状态 + 攻防建议"（用户 2026-10-23 要求）
     try:
         _adv = attack_advice()
