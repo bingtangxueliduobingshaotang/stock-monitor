@@ -292,6 +292,83 @@ def market_amount():
         return None
 
 
+# ===== 市场状态机（2026-10-23：七阶段 + 迁移条件）=====
+REGIME = {
+    1: ("单边下跌·阴跌段", "不猜底，等极端", 2),
+    2: ("单边下跌·极端段", "看情绪和缺口，第 3 个缺口才动手", 2),
+    3: ("情绪反扑", "敢上，但打一波就走", 6),
+    4: ("反弹修复", "回踩买，破 5 日线减", 7),
+    5: ("上涨趋势·健康", "拿住，别乱动", 10),
+    6: ("上涨趋势·过热", "分批止盈，不追", 5),
+    7: ("高位做头/滞涨", "清仓，等下一轮", 3),
+}
+
+
+def regime():
+    """返回 (阶段号, 名称, 一句话, 仓位上限成数, 判定证据)"""
+    try:
+        sh = realtime(["sh000001"]).get("sh000001")
+        ks = kline("sh000001", 30)
+        if not sh or len(ks) < 21:
+            return 0, "未知", "", 0, ""
+        closes = [b[2] for b in ks]
+        ma5 = sum(closes[-5:]) / 5.0
+        ma10 = sum(closes[-10:]) / 10.0
+        ma20 = sum(closes[-20:]) / 20.0
+        c = sh["price"]
+        amt = market_amount() or 0
+        se = sentiment()
+        zt, dt, lb = se.get("zt"), se.get("dt"), se.get("max_lb", 0)
+        gn, _ = gap_rule()
+        # 连涨连跌
+        up_days = down_days = 0
+        for i in range(len(ks) - 1, 0, -1):
+            if ks[i][2] > ks[i - 1][2]:
+                if down_days:
+                    break
+                up_days += 1
+            elif ks[i][2] < ks[i - 1][2]:
+                if up_days:
+                    break
+                down_days += 1
+            else:
+                break
+        # 5 日跌幅
+        d5 = (closes[-1] / closes[-6] - 1) * 100 if len(closes) >= 6 else 0
+        # 放量滞涨
+        stall = False
+        if len(ks) >= 2:
+            prev_amt = ks[-2][5] * (ks[-2][2] + ks[-2][3] + ks[-2][4]) / 3 / 1e8 / 10000.0
+            if prev_amt > 0 and amt > 0:
+                stall = (amt / prev_amt - 1 >= 0.30) and sh["chg"] < 0.2
+        ev = "MA5 %.0f/MA10 %.0f/MA20 %.0f｜量 %.2f万亿｜涨停 %s/跌停 %s/连板 %s｜连涨%d连跌%d｜5日%+.1f%%" % (
+            ma5, ma10, ma20, amt, zt, dt, lb, up_days, down_days, d5)
+        # —— 判定（从极端到常规）——
+        if zt is not None and (zt >= 100 or lb >= 7 or up_days >= 5):
+            n = 6
+        elif stall and c > ma20:
+            n = 7
+        elif (dt is not None and dt >= 40) or gn == 3 or d5 <= -6:
+            # 极端段；若同时"放量达标 + 当日拉起" → 反扑（第 3 缺口/冰点都算极端触发）
+            _need = vol_threshold(c)
+            if amt and amt >= _need and sh["chg"] >= 0.3:
+                n = 3
+            else:
+                n = 2
+        elif amt and sh["chg"] >= 0.3 and (dt is None or dt < 40) and c > ma5 and up_days >= 1 and ma5 < ma10 < ma20:
+            n = 4
+        elif ma5 > ma10 > ma20 and c > ma20:
+            n = 5
+        elif c < ma20 and ma5 < ma10 < ma20:
+            n = 1
+        else:
+            n = 4 if c > ma5 else 1
+        name, tip, pos = REGIME[n]
+        return n, name, tip, pos, ev
+    except Exception:
+        return 0, "未知", "", 0, ""
+
+
 def market_mode():
     """市场状态（2026-10-23 用户校正）：
     strong  = 趋势级强势（量达标 + 指数走强 + 不是从冰点刚爬起来）
@@ -928,7 +1005,14 @@ def build_close():
     rt = realtime([i["code"] for i in POOL])
     today = datetime.datetime.now(BJ).date().isoformat()
     mk = market_line()
-    lines = ["## 收盘复盘 + 明日预案（%s）" % today, ""] + ([mk, ""] if mk else []) + ["### 今日状态", ""]
+    try:
+        _rn, _rname, _rtip, _rpos, _rev = regime()
+        _rline = "**📍 当前市场阶段：%s·%s**（仓位上限 %d 成）｜%s" % (_rn, _rname, _rpos, _rtip)
+        _rline2 = "> %s" % _rev
+    except Exception:
+        _rline, _rline2 = "", ""
+    lines = (["## 收盘复盘 + 明日预案（%s）" % today, "", _rline, _rline2, ""] if _rline else
+             ["## 收盘复盘 + 明日预案（%s）" % today, ""]) + ([mk, ""] if mk else []) + ["### 今日状态", ""]
     tomorrow = []
     layer_rows = []
     for item in POOL:
@@ -1553,6 +1637,19 @@ def build_monitor():
                 "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
                 "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
             save_state(state)
+    except Exception:
+        pass
+    # 市场阶段迁移播报（状态机）
+    try:
+        _rn, _rname, _rtip, _rpos, _rev = regime()
+        _prev = state.get("regime")
+        if _rn and _prev and _rn != _prev and "regime|move" not in state["fired"]:
+            state["fired"].append("regime|move")
+            alerts.append(("🔄 【市场阶段迁移】**%s → %s·%s**\n%s｜**仓位上限 %d 成**\n证据：%s"
+                % (_prev, _rn, _rname, _rtip, _rpos, _rev), "regime|move", "regime"))
+        if _rn:
+            state["regime"] = _rn
+        save_state(state)
     except Exception:
         pass
     # 止盈 / 别参与（用户 10-23：好行情要提醒止盈，末期要提醒别追）
