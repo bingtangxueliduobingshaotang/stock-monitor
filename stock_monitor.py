@@ -341,6 +341,70 @@ def market_surge():
         return None, 0
 
 
+# ===== 国家队入场监测（2026-10-23 用户要求：宽基 ETF 突然放量 = 国家队在买）=====
+ETF_WATCH = [("sh510300", "沪深300ETF"), ("sh510050", "上证50ETF"), ("sh510500", "中证500ETF"),
+             ("sz159915", "创业板ETF"), ("sh588000", "科创50ETF")]
+
+
+def etf_flow():
+    """返回 [(名称, 今日成交额亿, 倍数, 涨跌%)] —— 倍数 = 今日额 / 近5日均额"""
+    out = []
+    try:
+        raw = http_get("https://qt.gtimg.cn/q=" + ",".join(c for c, _ in ETF_WATCH), gbk=True)
+        today = {}
+        for line in raw.strip().split(";"):
+            if '="' not in line:
+                continue
+            p = line.split('="')[1].strip('"').split("~")
+            if len(p) > 37:
+                code = ("sh" if p[2].startswith(("5", "6")) else "sz") + p[2]
+                try:
+                    today[code] = (float(p[37]) / 10000.0, float(p[32]) if p[32] else 0.0)
+                except Exception:
+                    pass
+        for code, name in ETF_WATCH:
+            if code not in today:
+                continue
+            amt, chg = today[code]
+            try:
+                ks = kline(code, 12)
+                hist = ks[:-1][-5:]
+                if len(hist) >= 5:
+                    avg = sum(b[5] * (b[2] + b[3] + b[4]) / 3 / 1e8 for b in hist) / 5.0  # 量(股)×均价→元→亿
+                    mult = amt / avg if avg > 0 else 0
+                else:
+                    mult = 0
+            except Exception:
+                mult = 0
+            out.append((name, amt, mult, chg))
+    except Exception:
+        pass
+    return out
+
+
+def national_team():
+    """两级判定（用户 10-23：突然放量就要报）：
+    confirm = ≥2 只宽基 ETF 达近 5 日均额 2.5 倍 → 疑似国家队真金白银进场
+    warn    = ≥2 只达 1.8 倍，且指数当日由跌转涨/大涨 → 资金明显异动（先预警）
+    """
+    rows = etf_flow()
+    strong = [r for r in rows if r[2] >= 2.5]
+    mid = [r for r in rows if r[2] >= 1.8]
+    sh = None
+    try:
+        sh = realtime(["sh000001"]).get("sh000001")
+    except Exception:
+        pass
+    up = bool(sh and sh.get("chg", 0) >= 0.3)
+    if len(strong) >= 2:
+        seg = " ｜ ".join("%s %.0f亿(%.1f倍)" % (n, a, m) for n, a, m, c in strong[:4])
+        return "confirm", seg, rows
+    if len(mid) >= 2 and up:
+        seg = " ｜ ".join("%s %.0f亿(%.1f倍)" % (n, a, m) for n, a, m, c in mid[:4])
+        return "warn", seg, rows
+    return None, None, rows
+
+
 def sentiment():
     """情绪指标（2026-10-23 建）：涨停/跌停家数 + 最高连板 + 涨停板块集中度
     数据源：东财涨停池/跌停池（push2ex），一次请求拿全"""
@@ -1393,6 +1457,23 @@ def build_monitor():
             alerts.append(("🚨 【全市场同步异动】%d 个宽基同时拉升\n%s\n"
                 "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
                 "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
+            save_state(state)
+    except Exception:
+        pass
+    # 国家队入场（用户 10-23：宽基 ETF 突然放量 = 国家队在买，等它入场我们再入场）
+    try:
+        _lvl, _nt, _rows = national_team()
+        _k = "nt|" + str(_lvl)
+        if _lvl and _k not in state["fired"]:
+            state["fired"].append(_k)
+            _head = ("🚨 【宽基ETF集体放量 → **疑似国家队入场**】" if _lvl == "confirm"
+                     else "🟡 【宽基ETF明显放量 → 资金异动预警】")
+            _body = ("**这是博反弹的入场信号（b30）**：国家队筑底买的就是这些宽基，ETF 放量=真金白银。\n"
+                     "- 动作：试仓 1/3-1/2，**不必等均线多头**（暴跌后本来就是空头）\n"
+                     "- 目标：反抽 5 日线/前高；**跌破当日低点立刻走**" if _lvl == "confirm"
+                     else "宽基放量但还没到极端（2.5 倍）——**候选信号，盯住**：若尾盘继续放大或明日再放，就升级为国家队入场。\n"
+                          "- 现在可以做的是：把想博反弹的标的选好，等确认（b30）")
+            alerts.append((_head + "\n" + _nt + "\n" + _body, _k, "nt"))
             save_state(state)
     except Exception:
         pass
