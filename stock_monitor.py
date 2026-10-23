@@ -293,9 +293,12 @@ def market_amount():
 
 
 def market_mode():
-    """市场状态：strong / weak / normal（决定个股信号是否放宽）
-    strong = 放量 + 指数涨 → 个股买入信号可执行（包括空头排列的 B1）
-    weak   = 缩量 + 指数跌 → 买入信号只观察
+    """市场状态（2026-10-23 用户校正）：
+    strong  = 趋势级强势（量达标 + 指数走强 + 不是从冰点刚爬起来）
+    rebound = 情绪反扑（冰点/连跌之后放量拉起）——**这时候不必要求均线多头**，
+              因为连续大跌后本来必然空头排列；但要做的是"反弹交易"而非"趋势交易"
+    weak    = 缩量下跌
+    normal  = 其它
     """
     try:
         rs = realtime(["sh000001", "sz399006"])
@@ -304,11 +307,20 @@ def market_mode():
         need = vol_threshold(sh["price"]) if sh else 1.7
         if not sh or amt is None:
             return "normal", ""
-        strong = (amt >= need) and sh["chg"] >= 0.3 and (cy and cy["chg"] >= 0.5)
-        weak = (amt < need * 0.8) and sh["chg"] <= -0.3
-        if strong:
-            return "strong", "放量反弹（量 %.2f 万亿 ≥ 所需 %.2f，上证 %+.2f%%）" % (amt, need, sh["chg"])
-        if weak:
+        # 情绪冰点判定（跌停多 / 涨停少 / 当天曾大幅下探后拉回）
+        _se = {}
+        try:
+            _se = sentiment()
+        except Exception:
+            pass
+        _zt, _dt = _se.get("zt"), _se.get("dt")
+        _ice = (_dt is not None and _dt >= 40) or (_zt is not None and _zt <= 20)
+        _big_dip = bool(sh.get("low") and sh.get("prev") and sh["low"] <= sh["prev"] * 0.985)   # 盘中曾跌 1.5%
+        if (amt >= need) and sh["chg"] >= 0.3 and (cy and cy["chg"] >= 0.5):
+            if _ice or _big_dip:
+                return "rebound", "情绪反扑（量 %.2f 万亿达标，但今天是从冰点/大跌里拉起来的）" % amt
+            return "strong", "趋势级强势（量 %.2f 万亿 ≥ 所需 %.2f，上证 %+.2f%%）" % (amt, need, sh["chg"])
+        if (amt < need * 0.8) and sh["chg"] <= -0.3:
             return "weak", "缩量下跌（量能不足所需 %.2f 万亿）" % need
         return "normal", ""
     except Exception:
@@ -1505,12 +1517,16 @@ def build_monitor():
                 act = "买入信号" if no.startswith("B") else "卖出信号"
                 if no.startswith("B"):
                     _mm, _mdet = _MODE[0], _MODE[1]
-                    if _mm == "strong":
-                        act += "（**大盘强势模式：可执行，先试仓 1/3**，跌破今日低点止损）" if sg["kong"] else "（大盘强势，可执行）"
+                    if _mm == "rebound":
+                        act += ("（**情绪反扑模式：空头排列不做限制**——连续大跌后本来就是空头，等排列就错过。"
+                                "但这是**反弹交易不是趋势交易**：试仓 1/3，目标反抽 5 日线/前高，"
+                                "**跌破今日低点立刻走，不恋战**）")
+                    elif _mm == "strong":
+                        act += "（趋势级强势：可执行，试仓 1/3，跌破今日低点止损）" if sg["kong"] else "（趋势级强势，可执行）"
                     elif _mm == "weak":
                         act += "（大盘弱势：只观察，不执行）"
                     elif sg["kong"]:
-                        act += "（空头排列，只观察；若大盘放量转强可试仓 1/3）"
+                        act += "（空头排列，只观察；若出现情绪冰点+放量反扑，按反弹交易试仓 1/3）"
                 alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）" % (
                     name, act, no, desc, r["price"], r["chg"]), key, "%s|sig" % code))
     save_state(state)
