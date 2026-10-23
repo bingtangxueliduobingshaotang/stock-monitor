@@ -304,6 +304,26 @@ REGIME = {
 }
 
 
+# ===== 反趋势特例（2026-10-23 用户：指数空头但个别票很强，这种特例能赚大钱）=====
+def reverse_strong(code):
+    """逆势走强判定：指数近 10 日跌 ≥3%，该票近 10 日不跌（≥0%），且站在 5 日线上
+    返回 (是否成立, 说明)"""
+    try:
+        idx = kline("sh000001", 16)
+        ks = kline(code, 16)
+        if len(idx) < 11 or len(ks) < 11:
+            return False, ""
+        idx_ret = (idx[-1][2] / idx[-11][2] - 1) * 100
+        stk_ret = (ks[-1][2] / ks[-11][2] - 1) * 100
+        ma5 = sum(b[2] for b in ks[-5:]) / 5.0
+        price = ks[-1][2]
+        if idx_ret <= -3 and stk_ret >= 0 and price > ma5:
+            return True, "指数10日 %+.1f%%，该票 %+.1f%%（逆势）且站上5日线" % (idx_ret, stk_ret)
+        return False, ""
+    except Exception:
+        return False, ""
+
+
 def regime():
     """返回 (阶段号, 名称, 一句话, 仓位上限成数, 判定证据)"""
     try:
@@ -1824,7 +1844,12 @@ def build_monitor():
                     elif _mm == "weak":
                         act += "（大盘弱势：只观察，不执行）"
                     elif sg["kong"]:
-                        act += "（空头排列，只观察；若出现情绪冰点+放量反扑，按反弹交易试仓 1/3）"
+                        _rs, _rsd = reverse_strong(code)
+                        if _rs:
+                            act += ("（**反趋势特例：%s** —— 指数空头但它逆势走强，属主线级别的例外，"
+                                    "**不受空头排列限制**：试仓 1/3-1/2，收盘破 5 日线即走）" % _rsd)
+                        else:
+                            act += "（空头排列，只观察；若出现情绪冰点+放量反扑，按反弹交易试仓 1/3）"
                 alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）" % (
                     name, act, no, desc, r["price"], r["chg"]), key, "%s|sig" % code))
     save_state(state)
