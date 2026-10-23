@@ -405,6 +405,52 @@ def national_team():
     return None, None, rows
 
 
+# ===== 跳空缺口计数（周老师"缺口三定律"：第1个逃、第2个等、第3个加）=====
+def gap_count(days=20):
+    """统计【当前这一波下跌】里的向下缺口（用户 2026-10-23 校正口径）：
+    - 只看最近 20 个交易日
+    - 严格缺口（今高<昨低）或开盘跳空 ≥0.5%
+    - **波段重置**：中途出现单日涨 ≥3%（大反弹）就清空重数
+    返回 [(日期, 缺口点数, 类型)]
+    """
+    out = []
+    try:
+        ks = kline("sh000001", days + 10)
+        seg = ks[-days:] if len(ks) > days else ks
+        prev_low = None
+        for i in range(1, len(seg)):
+            prev, cur = seg[i - 1], seg[i]
+            if prev_low is None:
+                prev_low = prev[4]
+            # 大反弹 → 波段重置
+            if prev[2] and cur[2] / prev[2] - 1 >= 0.03:
+                out = []
+                prev_low = cur[4]
+                continue
+            _min_gap = prev_low * 0.003          # 只算 ≥0.3% 的缺口（用户 10-23：小的不算，数出来才对）
+            if cur[3] < prev_low and (prev_low - cur[3]) >= _min_gap:
+                out.append((cur[0], round(prev_low - cur[3], 1), "严格"))
+            elif cur[1] < prev_low * 0.995 and (prev_low - cur[1]) >= _min_gap:
+                out.append((cur[0], round(prev_low - cur[1], 1), "开盘"))
+            prev_low = cur[4]
+    except Exception:
+        pass
+    return out
+
+
+def gap_rule():
+    """返回 (第几个, 提示语) —— 最近一个缺口在整段里的序号"""
+    gs = gap_count()
+    if not gs:
+        return None, None
+    n = len(gs)
+    tip = ("第 1 个 → **要逃**（破位缺口，不接）" if n == 1 else
+           "第 2 个 → **继续等**（加速缺口，还有低点）" if n == 2 else
+           "第 3 个 → **可以加**（衰竭缺口，抄底时机）" if n == 3 else
+           "第 %d 个 → 已超过三个，规律失效，按情绪/资金判断" % n)
+    return n, tip
+
+
 def sentiment():
     """情绪指标（2026-10-23 建）：涨停/跌停家数 + 最高连板 + 涨停板块集中度
     数据源：东财涨停池/跌停池（push2ex），一次请求拿全"""
@@ -1458,6 +1504,21 @@ def build_monitor():
                 "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
                 "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
             save_state(state)
+    except Exception:
+        pass
+    # 缺口三定律（周老师 10-23：第1个逃、第2个等、第3个加）
+    try:
+        _gn, _gtip = gap_rule()
+        if _gn and _gn >= 2:
+            _gk = "gap|n|%d" % _gn
+            if _gk not in state["fired"]:
+                state["fired"].append(_gk)
+                _glist = gap_count()[-4:]
+                _gseg = "、".join("%s(%.0f点,%s)" % (d[5:], p, t) for d, p, t in _glist)
+                alerts.append(("🕳 【向下跳空第 %d 个】%s\n按**缺口三定律**（周老师）：%s\n"
+                    "- 依据：第 1 个是破位（逃）、第 2 个是加速（等）、**第 3 个是衰竭（加）**"
+                    % (_gn, _gseg, _gtip), _gk, "gap"))
+                save_state(state)
     except Exception:
         pass
     # 国家队入场（用户 10-23：宽基 ETF 突然放量 = 国家队在买，等它入场我们再入场）
