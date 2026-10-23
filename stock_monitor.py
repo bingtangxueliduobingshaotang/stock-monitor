@@ -237,6 +237,78 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 
 
 # ---------------- 推送层 ----------------
+# ===== 灵活性与动态门槛（2026-10-23 用户要求："灵活一点、举一反三"）=====
+_VOL_TABLE = [(3600, 1.7), (3700, 1.75), (3800, 1.8), (3900, 2.0), (4000, 2.1), (4200, 2.3), (4500, 2.6)]
+
+
+def vol_threshold(price):
+    """点位 → 所需量能（万亿）。点位越高，需要的量越大（用户 10-23：4200 点 2 万亿都不够）"""
+    if not price:
+        return 1.7
+    if price <= _VOL_TABLE[0][0]:
+        return _VOL_TABLE[0][1]
+    for (p1, v1), (p2, v2) in zip(_VOL_TABLE, _VOL_TABLE[1:]):
+        if p1 <= price <= p2:
+            return round(v1 + (v2 - v1) * (price - p1) / (p2 - p1), 2)
+    return _VOL_TABLE[-1][1]
+
+
+def market_amount():
+    """两市成交额（万亿）"""
+    try:
+        raw = http_get("https://qt.gtimg.cn/q=sh000001,sz399001", gbk=True)
+        amt = 0.0
+        for line in raw.strip().split(";"):
+            if '="' not in line:
+                continue
+            p = line.split('="')[1].strip('"').split("~")
+            if len(p) > 37:
+                try:
+                    amt += float(p[37]) * 10000
+                except Exception:
+                    pass
+        return amt / 1000000000000.0 if amt else None
+    except Exception:
+        return None
+
+
+def market_mode():
+    """市场状态：strong / weak / normal（决定个股信号是否放宽）
+    strong = 放量 + 指数涨 → 个股买入信号可执行（包括空头排列的 B1）
+    weak   = 缩量 + 指数跌 → 买入信号只观察
+    """
+    try:
+        rs = realtime(["sh000001", "sz399006"])
+        sh, cy = rs.get("sh000001"), rs.get("sz399006")
+        amt = market_amount()
+        need = vol_threshold(sh["price"]) if sh else 1.7
+        if not sh or amt is None:
+            return "normal", ""
+        strong = (amt >= need) and sh["chg"] >= 0.3 and (cy and cy["chg"] >= 0.5)
+        weak = (amt < need * 0.8) and sh["chg"] <= -0.3
+        if strong:
+            return "strong", "放量反弹（量 %.2f 万亿 ≥ 所需 %.2f，上证 %+.2f%%）" % (amt, need, sh["chg"])
+        if weak:
+            return "weak", "缩量下跌（量能不足所需 %.2f 万亿）" % need
+        return "normal", ""
+    except Exception:
+        return "normal", ""
+
+
+def market_surge():
+    """全市场同步异动（用户 10-23：今天 13:00 一开盘所有板块一起往上拉，这种特殊要播报）"""
+    try:
+        codes = ["sh000001", "sz399001", "sz399006", "sh000688", "sh000852"]
+        rs = realtime(codes)
+        up = [(c, r) for c, r in rs.items() if r and r["chg"] >= 0.4]
+        if len(up) >= 4:
+            seg = " ｜ ".join("%s %+.2f%%" % (NAMES.get(c, c), r["chg"]) for c, r in up[:4])
+            return seg, len(up)
+        return None, 0
+    except Exception:
+        return None, 0
+
+
 def sentiment():
     """情绪指标（2026-10-23 建）：涨停/跌停家数 + 最高连板 + 涨停板块集中度
     数据源：东财涨停池/跌停池（push2ex），一次请求拿全"""
@@ -1193,6 +1265,7 @@ def build_monitor():
     state = load_state()
     rt = realtime([i["code"] for i in POOL])
     alerts = []
+    _MODE = market_mode()   # 市场状态（strong/weak/normal）——决定个股信号放宽还是收紧
     # 大盘关键位（config 的 market 段；2026-10-16 验证日布置）
     try:
         mkrt = realtime(["sh000001"]).get("sh000001")
@@ -1280,6 +1353,17 @@ def build_monitor():
         save_state(state)
     except Exception:
         pass
+    # 全市场同步异动（用户 10-23：13:00 开盘所有板块一起拉，这种特殊要播报）
+    try:
+        _sg, _n = market_surge()
+        if _sg and "surge|all" not in state["fired"]:
+            state["fired"].append("surge|all")
+            alerts.append(("🚨 【全市场同步异动】%d 个宽基同时拉升\n%s\n"
+                "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
+                "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
+            save_state(state)
+    except Exception:
+        pass
     # 情绪维度（2026-10-23 新增，用户要求：冰点提示打最后一笔仓位）
     try:
         _se = sentiment()
@@ -1345,6 +1429,11 @@ def build_monitor():
                         pass
             if _amt > 0:
                 _yi = _amt / 100000000.0
+                try:
+                    _shp = realtime(["sh000001"]).get("sh000001")
+                    _need = vol_threshold(_shp["price"]) if _shp else 1.7
+                except Exception:
+                    _need = 1.7
                 _tier = None
                 if _yi >= 17000:
                     _tier = ("vol|tier|17", "🔥 量能 **%.2f 万亿** ≥ 1.7 万亿——达到小寒/饕餮的「能做」门槛" % (_yi / 10000))
@@ -1389,8 +1478,14 @@ def build_monitor():
                     continue
                 state["fired"].append(key)
                 act = "买入信号" if no.startswith("B") else "卖出信号"
-                if no.startswith("B") and sg["kong"]:
-                    act += "（但空头排列，只观察不执行）"
+                if no.startswith("B"):
+                    _mm, _mdet = _MODE[0], _MODE[1]
+                    if _mm == "strong":
+                        act += "（**大盘强势模式：可执行，先试仓 1/3**，跌破今日低点止损）" if sg["kong"] else "（大盘强势，可执行）"
+                    elif _mm == "weak":
+                        act += "（大盘弱势：只观察，不执行）"
+                    elif sg["kong"]:
+                        act += "（空头排列，只观察；若大盘放量转强可试仓 1/3）"
                 alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）" % (
                     name, act, no, desc, r["price"], r["chg"]), key, "%s|sig" % code))
     save_state(state)
