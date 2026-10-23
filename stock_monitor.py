@@ -237,6 +237,39 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 
 
 # ---------------- 推送层 ----------------
+def sentiment():
+    """情绪指标（2026-10-23 建）：涨停/跌停家数 + 最高连板 + 涨停板块集中度
+    数据源：东财涨停池/跌停池（push2ex），一次请求拿全"""
+    import collections
+    ut = "7eea3edcaed734bea9cbfc24409ed989"
+    d = datetime.datetime.now(BJ).strftime("%Y%m%d")
+    out = {"zt": None, "dt": None, "max_lb": 0, "top_sector": None, "top_sector_n": 0}
+    try:
+        u = ("https://push2ex.eastmoney.com/getTopicZTPool?ut=%s&dpt=wz.ztzt"
+             "&Pageindex=0&pagesize=200&sort=fbt%%3Aasc&date=%s&_=%d"
+             % (ut, d, int(datetime.datetime.now().timestamp() * 1000)))
+        j = json.loads(http_get(u))
+        dd = j.get("data") or {}
+        out["zt"] = dd.get("tc")
+        pool = dd.get("pool") or []
+        out["max_lb"] = max([x.get("lbc") or 0 for x in pool] or [0])
+        cnt = collections.Counter([x.get("hybk") for x in pool if x.get("hybk")])
+        if cnt:
+            sec, n = cnt.most_common(1)[0]
+            out["top_sector"], out["top_sector_n"] = sec, n
+    except Exception:
+        pass
+    try:
+        u = ("https://push2ex.eastmoney.com/getTopicDTPool?ut=%s&dpt=wz.ztzt"
+             "&Pageindex=0&pagesize=200&sort=fund%%3Aasc&date=%s&_=%d"
+             % (ut, d, int(datetime.datetime.now().timestamp() * 1000)))
+        j = json.loads(http_get(u))
+        out["dt"] = (j.get("data") or {}).get("tc")
+    except Exception:
+        pass
+    return out
+
+
 def _ref_ok(state, limit=2):
     """参考类信号（银行/券商/创业板/宁德/中证1000）当日降噪：每天最多 limit 条（用户 2026-10-21 定）"""
     n = state.get("ref_cnt", 0)
@@ -1247,6 +1280,32 @@ def build_monitor():
         save_state(state)
     except Exception:
         pass
+    # 情绪维度（2026-10-23 新增，用户要求：冰点提示打最后一笔仓位）
+    try:
+        _se = sentiment()
+        _zt, _dt = _se.get("zt"), _se.get("dt")
+        if _zt is not None and _dt is not None:
+            if (_dt >= 40 or _zt <= 20) and "sent|ice" not in state["fired"]:
+                state["fired"].append("sent|ice")
+                alerts.append(("🧊 【情绪冰点】涨停 **%d** 家 ／ 跌停 **%d** 家\n"
+                    "**冰点=底部特征，可以打最后一笔仓位**（用户定义）：\n"
+                    "- 做法：把计划仓位的**最后 2-3 成**分两批——今天先打一半，**明天不破今日低点再补另一半**\n"
+                    "- 前提：指数当日必须**放量**（成交额较昨日放大），缩量冰点只能看不能买" % (_zt, _dt), "sent|ice", "sent|ice"))
+            if (_zt >= 100 or _se.get("max_lb", 0) >= 7) and "sent|hot" not in state["fired"]:
+                state["fired"].append("sent|hot")
+                alerts.append(("🔥 【情绪过热】涨停 **%d** 家 ／ 最高 **%d** 连板\n"
+                    "过热=减仓信号：别在这里加仓，涨得最猛的先减 1/3（s2）" % (_zt, _se.get("max_lb", 0)), "sent|hot", "sent|hot"))
+            # 板块效应：涨停集中度 ≥5 家 → 主线提示（用户要求"某个板块突然放量也要提示"）
+            _sn, _sc = _se.get("top_sector_n", 0), _se.get("top_sector")
+            if _sc and _sn >= 5:
+                _k = "sent|sector|" + str(_sc)
+                if _k not in state["fired"]:
+                    state["fired"].append(_k)
+                    alerts.append(("🎯 【板块效应】**%s** 涨停 **%d** 家（全市场涨停 %d 家）\n"
+                        "这是资金主攻方向——按「穿越性」标准验证它是不是主线（抗跌/独立/弹性/资金占比）" % (_sc, _sn, _zt), _k, "sent|sector"))
+            save_state(state)
+    except Exception:
+        pass
     # 小盘/游资信号（强龙：微盘股创新高+高标=游资在场；微盘无公开指数，用中证1000代理）
     try:
         _kb = kline("sh000852", 30)
@@ -1291,6 +1350,10 @@ def build_monitor():
                     _tier = ("vol|tier|17", "🔥 量能 **%.2f 万亿** ≥ 1.7 万亿——达到小寒/饕餮的「能做」门槛" % (_yi / 10000))
                 elif _yi >= 15000:
                     _tier = ("vol|tier|15", "⚡ 量能 **%.2f 万亿** ≥ 1.5 万亿（邹老师门槛）——够做，但没到 1.7" % (_yi / 10000))
+                elif _hm == "11:00" and _yi * 2 >= 17000:
+                    _tier = ("vol|tier|pace", "🚀 半日量 **%.2f 万亿**，推算全天约 **%.2f 万亿**（≥1.7 万亿门槛）——放量确认，可动手（老刘：长下影阳线+量能达标=底部条件）" % (_yi / 10000, _yi * 2 / 10000))
+                elif _hm == "14:00" and _yi * 1.15 >= 17000:
+                    _tier = ("vol|tier|pace", "🚀 14:00 量已 **%.2f 万亿**，推算全天约 **%.2f 万亿**（≥1.7 万亿）——放量确认" % (_yi / 10000, _yi * 1.15 / 10000))
                 elif _hm == "11:00" and _yi < 12000:
                     _tier = ("vol|tier|low", "⚠️ 半日量能仅 **%.2f 万亿**——量能不足，今天大概率还是「磨」（b26）" % (_yi / 10000))
                 if _tier and _tier[0] not in state["fired"]:
