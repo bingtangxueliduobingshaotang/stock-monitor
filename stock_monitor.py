@@ -338,11 +338,53 @@ def minute_bars(code="sh000001"):
             if len(p) < 4:
                 continue
             t, price, cum_v, cum_a = p[0], float(p[1]), float(p[2]), float(p[3])
+            if t > "1500":                     # 排除收盘集合竞价
+                break
             out.append((t, price, cum_v - prev_v, cum_a - prev_a))
             prev_v, prev_a = cum_v, cum_a
         return out
     except Exception:
         return []
+
+
+# ===== 龙头异动（2026-10-23 用户：宁王/华天/中信这些龙头的异动也是信号）=====
+LEADERS = [
+    ("sz300750", "宁德时代", "创业板+新能源锚"),
+    ("sz002185", "华天科技", "半导体封测"),
+    ("sh600030", "中信证券", "券商旗手"),
+    ("sh600519", "贵州茅台", "白酒/消费"),
+    ("sz002594", "比亚迪", "新能源车"),
+    ("sz300502", "新易盛", "光模块"),
+]
+
+
+def leader_move(lookback=12, mult=8.0, spike=3.0):
+    """龙头异动：最近 lookback 分钟内 ①单分钟额 ≥ 前20分钟均额 mult 倍 或 ②5 分钟涨跌 ≥ spike%
+    返回 [(名称, 方向, 说明, 时刻, 倍数, 该分钟额亿, 5分钟涨跌%)]"""
+    out = []
+    for code, name, tag in LEADERS:
+        try:
+            bars = minute_bars(code)
+            if len(bars) < 25:
+                continue
+            n = len(bars)
+            start = max(20, n - lookback)
+            for i in range(start, n):
+                base_amt = sum(b[3] for b in bars[i - 20:i]) / 20.0
+                if base_amt <= 0:
+                    continue
+                ratio = bars[i][3] / base_amt
+                chg5 = 0.0
+                if i >= 5 and bars[i - 5][1]:
+                    chg5 = (bars[i][1] / bars[i - 5][1] - 1) * 100
+                if ratio >= mult or abs(chg5) >= spike:
+                    direction = "拉升" if chg5 >= 0 else "跳水"
+                    out.append((name, direction, tag, "%s:%s" % (bars[i][0][:2], bars[i][0][2:]),
+                                round(ratio, 1), bars[i][3] / 1e8, round(chg5, 2)))
+                    break
+        except Exception:
+            continue
+    return out
 
 
 def volume_pulse(lookback=12, mult=3.5):
@@ -407,7 +449,7 @@ def vol_pace():
 
 
 # ===== 通知分级（2026-10-23 用户问：怎么优化通知）=====
-P0_TAGS = ("regime", "sent|ice", "sent|hot", "nt", "gap", "pt", "volpace", "adv", "pulse")
+P0_TAGS = ("regime", "sent|ice", "sent|hot", "nt", "gap", "pt", "volpace", "adv", "pulse", "leader")
 P2_TAGS = ("broker", "cyb", "ningde", "small", "bank", "vol|tier", "sent|sector")
 
 
@@ -1767,6 +1809,20 @@ def build_monitor():
                 "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
                 "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
             save_state(state)
+    except Exception:
+        pass
+    # 龙头异动（宁王/华天/中信等：龙头先动，板块才动）
+    try:
+        _lm = leader_move()
+        for _name, _dir, _tag, _t, _ratio, _amt, _c5 in _lm:
+            _k3 = "leader|%s|%s" % (_name, _t)
+            if _k3 in state["fired"]:
+                continue
+            state["fired"].append(_k3)
+            alerts.append(("🐲 【龙头异动】**%s**（%s）%s\n%s **%s**：该分钟成交 **%.1f 亿**（均额 %.1f 倍），5 分钟 **%+.2f%%**\n"
+                "> 龙头先动、板块才动——看它的方向能不能带动同板块"
+                % (_name, _tag, _t, _dir, _t, _amt, _ratio, _c5), _k3, "leader"))
+        save_state(state)
     except Exception:
         pass
     # 分钟级脉冲放量（最高优先级：一两分钟内的快速放量）
