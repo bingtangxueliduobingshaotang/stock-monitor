@@ -325,6 +325,54 @@ def reverse_strong(code):
 
 
 # ===== 量能节奏预警（2026-10-23 用户问：量以后会预警吗）=====
+# ===== 分钟级脉冲放量（用户 2026-10-23：最重要的是一两分钟内的快速放量）=====
+def minute_bars(code="sh000001"):
+    """抓当日分时：[(HHMM, 价格, 每分钟成交量股, 每分钟成交额元)]"""
+    try:
+        raw = http_get("https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=" + code)
+        j = json.loads(raw)
+        arr = j["data"][code]["data"]["data"]
+        out, prev_v, prev_a = [], 0.0, 0.0
+        for row in arr:
+            p = row.split()
+            if len(p) < 4:
+                continue
+            t, price, cum_v, cum_a = p[0], float(p[1]), float(p[2]), float(p[3])
+            out.append((t, price, cum_v - prev_v, cum_a - prev_a))
+            prev_v, prev_a = cum_v, cum_a
+        return out
+    except Exception:
+        return []
+
+
+def volume_pulse(lookback=12, mult=3.5):
+    """检测最近 lookback 分钟内的脉冲：单分钟量 ≥ 前 20 分钟均量 mult 倍，或连续 2 分钟 ≥ 2.5 倍
+    返回 [(HH:MM, 倍数, 该分钟成交额亿, 价格, 当分钟涨跌%)]"""
+    bars = minute_bars()
+    if len(bars) < 25:
+        return []
+    hits = []
+    n = len(bars)
+    start = max(20, n - lookback)
+    for i in range(start, n):
+        base_slice = bars[i - 20:i]
+        base = sum(b[2] for b in base_slice) / 20.0
+        if base <= 0:
+            continue
+        cur = bars[i][2]
+        ratio = cur / base
+        prev_price = bars[i - 1][1]
+        chg = (bars[i][1] / prev_price - 1) * 100 if prev_price else 0
+        ok = ratio >= mult
+        if not ok and i > 0:
+            prev_ratio = bars[i - 1][2] / base
+            ok = (ratio >= 2.5 and prev_ratio >= 2.5)      # 连续两分钟
+        if ok:
+            hits.append(("%s:%s" % (bars[i][0][:2], bars[i][0][2:]),
+                         round(ratio, 1), bars[i][3] / 1e8, bars[i][1], round(chg, 2)))
+    return hits
+
+
 def vol_pace():
     """当前量能 vs 过去 5 日"同进度"量能，返回 (比值, 当前万亿, 推算全天万亿, 进度%)
     盘中任意时刻可用：已过交易分钟 / 240 作为进度"""
@@ -359,7 +407,7 @@ def vol_pace():
 
 
 # ===== 通知分级（2026-10-23 用户问：怎么优化通知）=====
-P0_TAGS = ("regime", "sent|ice", "sent|hot", "nt", "gap", "pt", "volpace", "adv")
+P0_TAGS = ("regime", "sent|ice", "sent|hot", "nt", "gap", "pt", "volpace", "adv", "pulse")
 P2_TAGS = ("broker", "cyb", "ningde", "small", "bank", "vol|tier", "sent|sector")
 
 
@@ -1719,6 +1767,23 @@ def build_monitor():
                 "**含义**：不是单板块护盘，是资金集体进场（主动性行情）——这种异动优先级高于个股信号，"
                 "先看宽基能否收住，再决定跟不跟个股" % (_n, _sg), "surge|all", "surge|all"))
             save_state(state)
+    except Exception:
+        pass
+    # 分钟级脉冲放量（最高优先级：一两分钟内的快速放量）
+    try:
+        _hits = volume_pulse()
+        if _hits:
+            _last = _hits[-1]
+            _k2 = "pulse|" + _last[0]
+            if _k2 not in state["fired"]:
+                state["fired"].append(_k2)
+                _segs = "；".join("%s %s倍/%.1f亿" % (h[0], h[1], h[2]) for h in _hits[-3:])
+                alerts.append(("⚡ 【分钟级脉冲放量】%s\n最近一笔：**%s 的 %.0f 亿**（前 20 分钟均量 **%.1f 倍**），"
+                    "当时价 %.2f（%+.2f%%）\n"
+                    "> **这是最重要的信号**：一两分钟内突然放量 = 有资金在扫货/砸盘。"
+                    "配合方向看——拉升中的脉冲=进攻，下跌中的脉冲=出货或恐慌" % (_segs, _last[0], _last[2], _last[1], _last[3], _last[4]),
+                    _k2, "pulse"))
+                save_state(state)
     except Exception:
         pass
     # 量能节奏（5 个检查点：10:30 / 11:00 / 13:30 / 14:00 / 14:30）
