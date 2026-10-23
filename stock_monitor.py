@@ -242,7 +242,7 @@ def position_layers(sg, hits, broke_half, broke_full, level_touch):
 # 样本来源见 stock_helper/量能口径库.md；这里只放"最近一次学到的口径"
 _VOL_SAMPLES = [
     # (点位档, 及格, 达标, 确认, 来源)
-    (3700, 1.7, 1.8, 1.9, "老刘/小寒/教主 10-21~10-23"),
+    (3700, 1.8, 1.9, 2.0, "老刘10-23(1.8起码/2万很好)+小寒/教主"),
 ]
 
 
