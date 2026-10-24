@@ -49,6 +49,8 @@ def realtime(codes):
                 "name": p[1], "price": float(p[3]), "prev": float(p[4]),
                 "open": float(p[5]), "high": float(p[33]), "low": float(p[34]),
                 "chg": float(p[32]),
+                "vol": float(p[6]) if p[6] else 0.0,      # 手
+                "amt": float(p[37]) if p[37] else 0.0,    # 万元
             }
         except Exception:
             continue
@@ -349,12 +351,30 @@ def minute_bars(code="sh000001"):
 
 # ===== 龙头异动（2026-10-23 用户：宁王/华天/中信这些龙头的异动也是信号）=====
 LEADERS = [
+    # 权重/指数锚
     ("sz300750", "宁德时代", "创业板+新能源锚"),
-    ("sz002185", "华天科技", "半导体封测"),
-    ("sh600030", "中信证券", "券商旗手"),
     ("sh600519", "贵州茅台", "白酒/消费"),
-    ("sz002594", "比亚迪", "新能源车"),
+    ("sh601318", "中国平安", "保险/大金融"),
+    ("sh600036", "招商银行", "银行"),
+    # 成长主线
+    ("sh603259", "药明康德", "创新药/CXO"),
+    ("sh600276", "恒瑞医药", "创新药/龙头"),
+    ("sz002371", "北方华创", "半导体设备"),
+    ("sz002185", "华天科技", "半导体封测"),
     ("sz300502", "新易盛", "光模块"),
+    ("sz300308", "中际旭创", "光模块/算力"),
+    ("sh601138", "工业富联", "AI服务器"),
+    # 机器人/新能源
+    ("sz300124", "汇川技术", "机器人/工控"),
+    ("sz002050", "三花智控", "机器人/汽零"),
+    ("sh601689", "拓普集团", "机器人/汽零"),
+    ("sz002594", "比亚迪", "新能源车"),
+    # 金融/周期/其他
+    ("sh600030", "中信证券", "券商旗手"),
+    ("sz300059", "东方财富", "券商/散户情绪"),
+    ("sh601899", "紫金矿业", "有色/黄金"),
+    ("sh601088", "中国神华", "煤炭/红利"),
+    ("sh600031", "三一重工", "工程机械"),
 ]
 
 
@@ -413,6 +433,85 @@ def volume_pulse(lookback=12, mult=3.5):
             hits.append(("%s:%s" % (bars[i][0][:2], bars[i][0][2:]),
                          round(ratio, 1), bars[i][3] / 1e8, bars[i][1], round(chg, 2)))
     return hits
+
+
+# ===== 策略池量能同比 + 板块对比（2026-10-23 用户要求）=====
+PEERS = {
+    "sz000425": ("sh600031", "三一重工", "工程机械"),
+    "sh600469": ("sh601966", "玲珑轮胎", "轮胎/汽零"),
+    "sh520700": ("sh600276", "恒瑞医药", "创新药"),
+    "sz159516": ("sz002371", "北方华创", "半导体设备"),
+    "sh512880": ("sh600030", "中信证券", "券商"),
+    "sz159559": ("sz300124", "汇川技术", "机器人"),
+    "sz002738": ("sh601899", "紫金矿业", "有色/锂"),
+}
+
+
+def _progress():
+    """已过交易时间占比"""
+    now = datetime.datetime.now(BJ)
+    hm = now.hour * 60 + now.minute
+    if 9 * 60 + 30 <= hm <= 11 * 60 + 30:
+        p = hm - (9 * 60 + 30)
+    elif 13 * 60 <= hm <= 15 * 60:
+        p = 120 + (hm - 13 * 60)
+    elif hm > 15 * 60:
+        p = 240
+    else:
+        p = 1
+    return max(1, min(240, p)) / 240.0
+
+
+def pool_volume_pace():
+    """策略池 7 只：今日额、较昨日同期增减%、预计全天额
+    口径：今日量(手)×100 股 / (昨日全天量(股) × 进度)"""
+    prog = _progress()
+    codes = [i["code"] for i in POOL]
+    rt = realtime(codes)
+    rows = []
+    for item in POOL:
+        code, name = item["code"], item["name"]
+        r = rt.get(code)
+        if not r:
+            continue
+        try:
+            ks = kline(code, 6)
+            if len(ks) < 2:
+                continue
+            yest_shares = ks[-2][5]
+            today_shares = r["vol"] * 100
+            ratio = today_shares / (yest_shares * prog) if yest_shares and prog else None
+            amt_yi = r["amt"] / 10000.0                    # 万元 → 亿元
+            est = amt_yi / prog if prog > 0 else None
+            rows.append((name, amt_yi, (ratio - 1) * 100 if ratio else None, est))
+        except Exception:
+            continue
+    return rows
+
+
+def pool_vs_peer():
+    """策略池 vs 同板块龙头：判断跟随/独立（用户 2026-10-23 要求）"""
+    codes = [i["code"] for i in POOL] + [v[0] for v in PEERS.values()]
+    rt = realtime(list(dict.fromkeys(codes)))
+    out = []
+    for item in POOL:
+        code, name = item["code"], item["name"]
+        peer = PEERS.get(code)
+        if not peer or code not in rt:
+            continue
+        pcode, pname, sector = peer
+        pr = rt.get(pcode)
+        if not pr:
+            continue
+        diff = rt[code]["chg"] - pr["chg"]
+        if abs(diff) < 1.0:
+            verdict = "跟随板块"
+        elif diff > 0:
+            verdict = "**独立走强**（强于板块 %.1f 个点）" % diff
+        else:
+            verdict = "**独立走弱**（弱于板块 %.1f 个点）" % abs(diff)
+        out.append((name, rt[code]["chg"], pname, pr["chg"], verdict, sector))
+    return out
 
 
 def vol_pace():
@@ -1159,6 +1258,29 @@ def build_week():
     else:
         lines.append("- 本周无完整日线数据，略")
 
+    # 策略池量能同比 + 板块对比（用户 2026-10-23 要求）
+    try:
+        _rows = pool_volume_pace()
+        if _rows:
+            lines += ["", "### 五、策略池量能（较昨日同期）", ""]
+            for _n, _a, _pct, _est in _rows:
+                _flag = "🔺" if (_pct or 0) >= 30 else ("🔻" if (_pct or 0) <= -30 else "➖")
+                lines.append("- **%s** 今日 **%.2f 亿** ｜ 较昨日同期 **%+.0f%%** %s ｜ 预计全天 **%.2f 亿**"
+                             % (_n, _a, (_pct or 0), _flag, _est or 0))
+            _tot = sum(r[1] for r in _rows)
+            lines.append("- **合计 %.2f 亿**（池内 7 只）" % _tot)
+    except Exception:
+        pass
+    try:
+        _pv = pool_vs_peer()
+        if _pv:
+            lines += ["", "### 六、策略池 vs 板块（跟随还是独立）", ""]
+            for _n, _c, _pn, _pc, _v, _sec in _pv:
+                lines.append("- **%s** %+.2f%% ｜ %s（%s）%+.2f%% → %s" % (_n, _c, _pn, _sec, _pc, _v))
+            lines.append("> 读法：跟随板块=板块行情；**独立走强=有独立逻辑（可能是主线）**；独立走弱=自身有问题")
+    except Exception:
+        pass
+
     lines += ["", "### 五、教学点（本周最该记住的 3 条）"]
     lines += ["1. **量能是唯一的确认**：1.4-1.5 万亿只能磨，1.7 万亿以上才有像样反弹（b26 三口径）",
               "2. **破位后的第一反抽通常不是底**：反抽≠反弹（b21）——先看能否收回 3724/3741",
@@ -1240,6 +1362,28 @@ def build_close():
         lines.append("")
         lines.append("**建议总仓位：约 %.1f 成**（%s）" % (
             yuan / tot * 10, "、".join("%s %d/10" % (n, l) for n, l in layer_rows)))
+    # 策略池量能同比 + 板块对比（用户 2026-10-23 要求）
+    try:
+        _rows = pool_volume_pace()
+        if _rows:
+            lines += ["", "### 策略池量能（较昨日同期）", ""]
+            for _n, _a, _pct, _est in _rows:
+                _flag = "🔺" if (_pct or 0) >= 30 else ("🔻" if (_pct or 0) <= -30 else "➖")
+                lines.append("- **%s** 今日 **%.2f 亿** ｜ 较昨日同期 **%+.0f%%** %s ｜ 预计全天 **%.2f 亿**"
+                             % (_n, _a, (_pct or 0), _flag, _est or 0))
+            lines.append("- **池内合计 %.2f 亿**" % sum(r[1] for r in _rows))
+    except Exception:
+        pass
+    try:
+        _pv = pool_vs_peer()
+        if _pv:
+            lines += ["", "### 策略池 vs 板块（跟随还是独立）", ""]
+            for _n, _c, _pn, _pc, _v, _sec in _pv:
+                lines.append("- **%s** %+.2f%% ｜ %s（%s）%+.2f%% → %s" % (_n, _c, _pn, _sec, _pc, _v))
+            lines.append("> 跟随板块=板块行情；**独立走强=有独立逻辑（可能是主线）**；独立走弱=自身有问题")
+    except Exception:
+        pass
+
     lines.append("### 明日盯防（挂条件单/预警）")
     lines.extend(tomorrow)
     lines.append("")
