@@ -85,7 +85,10 @@ def kline(code, n=140):
 
 
 def is_trading_day():
-    """A股交易日自检：上证指数实时行情的最后成交时间是否今天（自动识别节假日，零维护）"""
+    """A股交易日自检：上证指数实时行情的最后成交时间是否今天（自动识别节假日，零维护）
+    FORCE_TRADING=1 仅供本地回归测试绕过（2026-10-24 加）"""
+    if os.environ.get("FORCE_TRADING") == "1":
+        return True
     try:
         raw = http_get("https://qt.gtimg.cn/q=sh000001", gbk=True)
         p = raw.split('="')[1].split("~")
