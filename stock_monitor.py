@@ -106,9 +106,9 @@ def in_window(mode, t=None):
         _n = datetime.datetime.now(BJ)
         t = _n.hour * 100 + _n.minute
     if mode == "morning":
-        return 915 <= t <= 940
+        return 925 <= t <= 940
     if mode == "monitor":
-        return (915 <= t <= 1130) or (1300 <= t <= 1500)
+        return (925 <= t <= 1130) or (1300 <= t <= 1500)   # 9:25 起（20 分前可撤单，25 分才是定价）
     if mode == "intraday":
         return 925 <= t <= 1505
     if mode == "close":
@@ -2254,31 +2254,45 @@ def build_monitor():
             alerts.insert(0, (_adv, "adv|" + str(datetime.datetime.now(BJ).strftime("%H%M")), "adv"))
     except Exception:
         pass
-    # 语义去重（用户 2026-10-20 定：不能连续两次播报同一个意思）：同标的同方向 60 分钟内只报一次
-    sem = state.setdefault("semantic", {})
+    # 去重：按「涨幅变化幅度」判定（用户 2026-10-25 定）
+    # 规则：同一标的，只有当涨幅比上次推送时变化 ≥2 个点（或方向反转）才再报；
+    #      变化 <2 点视为"同一意思"，静默。这样既灵敏又不重复。
+    import re as _re
+    _last = state.setdefault("last_chg", {})
+    _lastts = state.setdefault("last_ts", {})
     _now = datetime.datetime.now(BJ)
     final = []
     for _a in alerts:
         _text, _key, _sk = _a
+        _m = _re.search(r"^(sh|sz)\d{6}", _sk or "")
+        _code = _m.group(0) if _m else None
+        _chm = _re.search(r"([+-]?\d+\.?\d*)%", _text)
+        _chg = float(_chm.group(1)) if _chm else None
         _ok = True
-        _ts = sem.get(_sk)
-        if _ts:
-            try:
-                _dt = datetime.datetime.fromisoformat(_ts)
-                if _dt.tzinfo is None:
-                    _dt = _dt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
-                if (_now - _dt).total_seconds() < 3600:
-                    _ok = False
-                    if _key in state["fired"]:
-                        state["fired"].remove(_key)   # 撤回精确标记，60 分钟后仍触发可再报
-            except Exception:
-                pass
+        if _code and _chg is not None and _code in _last:
+            _prev = _last[_code]
+            _delta = abs(_chg - _prev)
+            _flip = (_prev > 0 > _chg) or (_prev < 0 < _chg)
+            _last_t = _lastts.get(_code)
+            _gap_min = 99
+            if _last_t:
+                try:
+                    _dt = datetime.datetime.fromisoformat(_last_t)
+                    if _dt.tzinfo is None:
+                        _dt = _dt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                    _gap_min = (_now - _dt).total_seconds() / 60.0
+                except Exception:
+                    pass
+            if _delta < 2.0 and not _flip and _gap_min < 30:
+                _ok = False           # 变化不够大 → 静默（30 分钟后再评估）
         if _ok:
-            sem[_sk] = _now.isoformat()
+            if _code and _chg is not None:
+                _last[_code] = _chg
+                _lastts[_code] = _now.isoformat()
             final.append(_text)
     save_state(state)
     if not final:
-        print("语义去重后无新触发（60 分钟内同标的同方向已报过）")
+        print("去重：涨幅变化不足 2 个点，静默")
         return None
     t = datetime.datetime.now(BJ).strftime("%H:%M")
     return "## 触发告警 %s\n\n" % t + "\n\n---\n\n".join(final)
