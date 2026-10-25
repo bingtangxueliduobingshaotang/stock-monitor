@@ -439,14 +439,16 @@ def volume_pulse(lookback=12, mult=3.5):
 
 
 # ===== 策略池量能同比 + 板块对比（2026-10-23 用户要求）=====
-PEERS = {
-    "sz000425": ("sh600031", "三一重工", "工程机械"),
-    "sh600469": ("sh601966", "玲珑轮胎", "轮胎/汽零"),
-    "sh520700": ("sh600276", "恒瑞医药", "创新药"),
-    "sz159516": ("sz002371", "北方华创", "半导体设备"),
-    "sh512880": ("sh600030", "中信证券", "券商"),
-    "sz159559": ("sz300124", "汇川技术", "机器人"),
-    "sz002738": ("sh601899", "紫金矿业", "有色/锂"),
+# 板块篮子：策略池标的 → (板块名, [同板块代表股3只], 龙头)
+# 用同板块多只代表股的等权均值作为"板块涨跌"（东财板块接口不稳定，2026-10-25 改）
+SECTOR_BASKET = {
+    "sz000425": ("工程机械", ["sh600031", "sz000528", "sz000157"], "sh600031"),   # 三一/柳工/中联，龙头三一
+    "sh600469": ("轮胎汽零", ["sh601966", "sh601058", "sz002984"], "sh601966"),   # 玲珑/赛轮/森麒麟
+    "sh520700": ("创新药", ["sh600276", "sh603259", "sh688235"], "sh600276"),     # 恒瑞/药明/百济
+    "sz159516": ("半导体设备", ["sz002371", "sh688012", "sh688072"], "sz002371"), # 北方华创/中微/拓荆
+    "sh512880": ("券商", ["sh600030", "sz300059", "sh601688"], "sh600030"),       # 中信/东财/华泰
+    "sz159559": ("机器人", ["sz300124", "sz002050", "sh601689"], "sz300124"),     # 汇川/三花/拓普
+    "sz002738": ("有色锂", ["sh601899", "sz002460", "sz002466"], "sh601899"),     # 紫金/赣锋/天齐
 }
 
 
@@ -493,27 +495,38 @@ def pool_volume_pace():
 
 
 def pool_vs_peer():
-    """策略池 vs 同板块龙头：判断跟随/独立（用户 2026-10-23 要求）"""
-    codes = [i["code"] for i in POOL] + [v[0] for v in PEERS.values()]
-    rt = realtime(list(dict.fromkeys(codes)))
+    """策略池三层对比（用户 2026-10-25 要求）：个股 vs 所属板块均值 vs 板块龙头
+    返回 [(名称, 个股chg, 板块名, 板块chg, 龙头名, 龙头chg, 结论)]"""
+    need = list(dict.fromkeys([i["code"] for i in POOL] +
+                             [c for _, (_, basket, ld) in SECTOR_BASKET.items() for c in basket] +
+                             [ld for _, (_, _, ld) in SECTOR_BASKET.items()]))
+    rt = {}
+    for i in range(0, len(need), 40):
+        rt.update(realtime(need[i:i + 40]))
     out = []
     for item in POOL:
         code, name = item["code"], item["name"]
-        peer = PEERS.get(code)
-        if not peer or code not in rt:
+        pack = SECTOR_BASKET.get(code)
+        if not pack or code not in rt:
             continue
-        pcode, pname, sector = peer
-        pr = rt.get(pcode)
-        if not pr:
+        sector, basket, leader = pack
+        chgs = [rt[c]["chg"] for c in basket if c in rt]
+        if not chgs:
             continue
-        diff = rt[code]["chg"] - pr["chg"]
-        if abs(diff) < 1.0:
-            verdict = "跟随板块"
-        elif diff > 0:
-            verdict = "**独立走强**（强于板块 %.1f 个点）" % diff
+        s_chg = sum(chgs) / len(chgs)
+        l_chg = rt[leader]["chg"] if leader in rt else None
+        c_chg = rt[code]["chg"]
+        vs_sector = c_chg - s_chg
+        if vs_sector >= 1.0 and (l_chg is None or c_chg >= l_chg):
+            verdict = "**板块内最强**（强于板块 %.1f 个点，不弱于龙头）" % vs_sector
+        elif vs_sector >= 1.0:
+            verdict = "**强于板块** %.1f 个点，但龙头更强" % vs_sector
+        elif vs_sector <= -1.0:
+            verdict = "**弱于板块** %.1f 个点（拖后腿）" % abs(vs_sector)
         else:
-            verdict = "**独立走弱**（弱于板块 %.1f 个点）" % abs(diff)
-        out.append((name, rt[code]["chg"], pname, pr["chg"], verdict, sector))
+            verdict = "跟随板块"
+        out.append((name, c_chg, sector, s_chg,
+                    (rt[leader]["name"] if leader in rt else "龙头"), l_chg, verdict))
     return out
 
 
@@ -1380,10 +1393,12 @@ def build_close():
     try:
         _pv = pool_vs_peer()
         if _pv:
-            lines += ["", "### 策略池 vs 板块（跟随还是独立）", ""]
-            for _n, _c, _pn, _pc, _v, _sec in _pv:
-                lines.append("- **%s** %+.2f%% ｜ %s（%s）%+.2f%% → %s" % (_n, _c, _pn, _sec, _pc, _v))
-            lines.append("> 跟随板块=板块行情；**独立走强=有独立逻辑（可能是主线）**；独立走弱=自身有问题")
+            lines += ["", "### 策略池 vs 板块 vs 龙头（三层对比）", ""]
+            for _n, _c, _sec, _sc, _ln, _lc, _v in _pv:
+                lines.append("- **%s** %+.2f%% ｜ 板块「%s」%+.2f%%（3 只代表股均值）｜ 龙头 %s %+.2f%%\n  → %s"
+                             % (_n, _c, _sec, _sc, _ln, (_lc if _lc is not None else 0), _v))
+            lines.append("> 读法：**板块内最强**=强于板块且不弱于龙头（最值得做）；"
+                         "强于板块但龙头更强=跟风；**弱于板块**=拖后腿（该换）")
     except Exception:
         pass
 
