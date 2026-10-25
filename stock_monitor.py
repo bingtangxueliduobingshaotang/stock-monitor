@@ -51,6 +51,7 @@ def realtime(codes):
                 "chg": float(p[32]),
                 "vol": float(p[6]) if p[6] else 0.0,      # 手
                 "amt": float(p[37]) if p[37] else 0.0,    # 万元
+                "vr": float(p[49]) if len(p) > 49 and p[49] else 0.0,   # 量比
             }
         except Exception:
             continue
@@ -612,6 +613,29 @@ def attack_advice():
         return "**📍 大盘状态：%d·%s（%s）**｜仓位上限 %d 成\n> 今日对策：%s" % (n, name, mode, pos, adv)
     except Exception:
         return ""
+
+
+def vp_tag(r):
+    """量价判读（用户 2026-10-25：不能只看涨幅，要看量比）
+    返回 (标签, 提示)"""
+    try:
+        chg = r.get("chg", 0.0)
+        vr = r.get("vr", 0.0)
+        if not vr:
+            return "", ""
+        if chg > 0 and vr >= 2.0:
+            return "放量上涨", "量价配合（强，可持续）"
+        if chg > 0 and vr <= 0.6:
+            return "缩量上涨", "**量价背离：虚涨，随时回落**"
+        if chg < 0 and vr >= 2.0:
+            return "放量下跌", "**有资金在出，别接**"
+        if chg < 0 and vr <= 0.6:
+            return "缩量下跌", "抛压不大，可能是洗盘"
+        if abs(chg) < 0.3 and vr >= 1.8:
+            return "放量滞涨", "**量放着但涨不动 = 有人在派**"
+        return "", ""
+    except Exception:
+        return "", ""
 
 
 def regime():
@@ -2274,8 +2298,10 @@ def build_monitor():
                                     "**不受空头排列限制**：试仓 1/3-1/2，收盘破 5 日线即走）" % _rsd)
                         else:
                             act += "（空头排列，只观察；若出现情绪冰点+放量反扑，按反弹交易试仓 1/3）"
-                alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）" % (
-                    name, act, no, desc, r["price"], r["chg"]), key, "%s|sig" % code))
+                _vpt, _vph = vp_tag(r)
+                _vpline = ("\n> 量价：**%s**（量比 %.2f）——%s" % (_vpt, r.get("vr", 0), _vph)) if _vpt else ""
+                alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）%s" % (
+                    name, act, no, desc, r["price"], r["chg"], _vpline), key, "%s|sig" % code))
     save_state(state)
     if not alerts:
         print("无新触发")
@@ -2347,8 +2373,9 @@ def build_monitor():
                     _gap_min = (_now - _dt).total_seconds() / 60.0
                 except Exception:
                     pass
-            if _delta < 2.0 and not _flip and _gap_min < 30:
-                _ok = False           # 变化不够大 → 静默（30 分钟后再评估）
+            _vpchg = "量价：" in _text and ("背离" in _text or "派" in _text or "别接" in _text)
+            if _delta < 2.0 and not _flip and not _vpchg and _gap_min < 30:
+                _ok = False           # 涨幅变化不够大且无量价背离 → 静默
         if _ok:
             if _code and _chg is not None:
                 _last[_code] = _chg
