@@ -278,7 +278,26 @@ def vol_ref(price):
     return near[1], near[2], near[3], near[4], False
 
 
+_CACHE = {}
+
+
+def _cached(key, ttl, fn):
+    """简单缓存（同一次运行内避免重复网络请求，2026-10-25 加）"""
+    import time as _t
+    now = _t.time()
+    v = _CACHE.get(key)
+    if v and now - v[0] < ttl:
+        return v[1]
+    r = fn()
+    _CACHE[key] = (now, r)
+    return r
+
+
 def market_amount():
+    return _cached("amount", 55, _market_amount_raw)
+
+
+def _market_amount_raw():
     """两市成交额（万亿）"""
     try:
         raw = http_get("https://qt.gtimg.cn/q=sh000001,sz399001", gbk=True)
@@ -1123,6 +1142,35 @@ def build_intraday(tag):
     rt = realtime([i["code"] for i in POOL])
     mk = market_line()
     lines = ["## 策略池中盘对策（%s）" % tag, ""] + ([mk, ""] if mk else [])
+    # 详细版：阶段 + 对策 + 量能台阶 + 今日重点（用户 2026-10-25 要求整点写详细）
+    try:
+        _rn, _rname, _rtip, _rpos, _rev = regime()
+        lines += ["**📍 阶段 %s·%s**｜仓位上限 %d 成｜%s" % (_rn, _rname, _rpos, _rtip), ""]
+        _adv = attack_advice()
+        if _adv:
+            lines += [_adv.split("\n")[-1], ""]
+    except Exception:
+        pass
+    try:
+        _ratio, _amt, _full, _pg = vol_pace()
+        if _amt:
+            _need = vol_threshold((realtime(["sh000001"]).get("sh000001") or {}).get("price"))
+            _flag = "达标" if _amt >= _need else "不足（需 %.2f 万亿）" % _need
+            _line = "**📊 量能 %.2f 万亿**（进度 %.0f%%）｜推算全天 **%.2f 万亿**｜该档门槛 %.2f → **%s**" % (
+                _amt, _pg, _full or 0, _need, _flag)
+            if _ratio:
+                _line += "｜同期比 **%+.0f%%**" % ((_ratio - 1) * 100)
+            lines += [_line, ""]
+            # 老刘三档目标
+            if _full:
+                if _full >= 1.8:
+                    lines += ["> 按老刘三档：**≥1.8 → 志存高远，可看 3800**", ""]
+                elif _full >= 1.6:
+                    lines += ["> 按老刘三档：**1.6-1.8 → 受压缺口，3741-3800 减 1/3**", ""]
+                else:
+                    lines += ["> 按老刘三档：**≤1.4-1.6 → 量能不足，只当反抽，别加**", ""]
+    except Exception:
+        pass
     layer_rows = []
     for item in POOL:
         code = item["code"]
@@ -2252,6 +2300,22 @@ def build_monitor():
         _adv = attack_advice()
         if _adv:
             alerts.insert(0, (_adv, "adv|" + str(datetime.datetime.now(BJ).strftime("%H%M")), "adv"))
+    except Exception:
+        pass
+    # 重点摘要（用户 2026-10-25：把最重要的信息突出出来）
+    try:
+        _PRI = ("pulse", "leader", "regime", "nt", "sent", "gap", "pt", "volpace", "surge")
+        def _prio(a):
+            for _i, _p in enumerate(_PRI):
+                if (a[2] or "").startswith(_p):
+                    return _i
+            return 99
+        _core = [a for a in alerts if a[2] != "adv" and _prio(a) < 99]
+        if _core:
+            _best = sorted(_core, key=_prio)[0]
+            _first_line = [l for l in _best[0].splitlines() if l.strip()][0]
+            _first_line = _first_line.replace('<font color="red">', '').replace('</font>', '').replace('**', '')
+            alerts.insert(1, ("**⚡ 重点：%s**" % _first_line[:60], "top|" + str(id(_best)), "top"))
     except Exception:
         pass
     # 去重：按「涨幅变化幅度」判定（用户 2026-10-25 定）
