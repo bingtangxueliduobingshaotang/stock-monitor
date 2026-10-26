@@ -2507,6 +2507,21 @@ if __name__ == "__main__":
                 sys.exit(0)
             st_m = load_state()
             du = st_m.get("defer_until")
+            # 自愈：顺延时间已过 / 不是今天 → 清掉，避免残留吞告警
+            if du:
+                try:
+                    _dd = datetime.datetime.fromisoformat(du)
+                    if _dd.tzinfo is None:
+                        _dd = _dd.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+                    if _dd <= datetime.datetime.now(BJ) or _dd.date() != datetime.datetime.now(BJ).date():
+                        st_m.pop("defer_until", None)
+                        st_m.pop("deferred_pushed", None)
+                        save_state(st_m)
+                        du = None
+                except Exception:
+                    st_m.pop("defer_until", None)
+                    save_state(st_m)
+                    du = None
             if du:
                 try:
                     ddt = datetime.datetime.fromisoformat(du)
@@ -2514,8 +2529,9 @@ if __name__ == "__main__":
                         ddt = ddt.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
                     if ddt.date() == datetime.datetime.now(BJ).date():
                         if datetime.datetime.now(BJ) < ddt:
-                            print("[%s] 对策已顺延至 %s，期间告警静默（异动由顺延对策统一覆盖）" % (hm, ddt.strftime("%H:%M")))
-                            sys.exit(0)
+                            # 2026-10-26 用户明确：只防重复，不是不让推！
+                            # 顺延期只影响"对策补推"，**告警照常走去重逻辑（按幅度）**
+                            print("[%s] 对策顺延至 %s（告警不受影响，仍按幅度去重后推送）" % (hm, ddt.strftime("%H:%M")))
                         if not st_m.get("deferred_pushed"):
                             push("【策略池对策·顺延】" + now, build_intraday("顺延 %s" % ddt.strftime("%H:%M")))
                             st_m["deferred_pushed"] = True
@@ -2533,8 +2549,10 @@ if __name__ == "__main__":
                         if _la.tzinfo is None:
                             _la = _la.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
                         _gap = (datetime.datetime.now(BJ) - _la).total_seconds()
-                        if _gap < 1200:
-                            print("[%s] 距上次播报 %d 分钟（<20），静默" % (hm, int(_gap // 60)))
+                        # 2026-10-26 用户明确：只防重复，不拦新信息。
+                        # 20 分钟冷却会吞掉真实异动 → 缩到 3 分钟（只防同一波重复推）
+                        if _gap < 180:
+                            print("[%s] 距上次播报 %d 秒（<3 分钟），同一波静默" % (hm, int(_gap)))
                             sys.exit(0)
                     except Exception:
                         pass
