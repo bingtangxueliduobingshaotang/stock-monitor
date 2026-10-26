@@ -566,18 +566,32 @@ def vol_pace():
         else:
             passed = 1
         passed = max(1, min(240, passed))
-        prog = passed / 240.0
+        # 日内成交量分布（A股经验：开盘/尾盘集中，非均匀）
+        # 累计占比表：分钟数 → 已成交量占比
+        _CURVE = [(15, 0.11), (30, 0.22), (45, 0.29), (60, 0.38), (75, 0.42),
+                  (90, 0.46), (105, 0.50), (120, 0.55), (135, 0.60), (150, 0.65),
+                  (165, 0.70), (180, 0.76), (195, 0.82), (210, 0.88), (225, 0.94), (240, 1.0)]
+        prog = 0.01
+        for _m, _p in _CURVE:
+            if passed <= _m:
+                prog = _p
+                break
+        else:
+            prog = 1.0
         amt = market_amount()
         if not amt:
             return None, None, None, prog * 100
+        # 今日量用实时成交量（kline 盘中不含今日，2026-10-26 修正）
+        rts = realtime(["sh000001"]).get("sh000001") or {}
+        today_shares = (rts.get("vol") or 0) * 100
         ks = kline("sh000001", 8)
-        if len(ks) < 6:
+        _today = datetime.datetime.now(BJ).strftime("%Y-%m-%d")
+        hist = [b for b in ks if b[0] != _today][-5:]
+        if not hist or not today_shares:
             return None, amt, None, prog * 100
-        today_vol = ks[-1][5]
-        hist = ks[-6:-1]
-        avg_vol = sum(b[5] for b in hist) / 5.0
+        avg_vol = sum(b[5] for b in hist) / float(len(hist))
         expect = avg_vol * prog
-        ratio = today_vol / expect if expect > 0 else None
+        ratio = today_shares / expect if expect > 0 else None
         return ratio, amt, amt / prog if prog > 0 else None, prog * 100
     except Exception:
         return None, None, None, 0
@@ -1179,7 +1193,7 @@ def build_intraday(tag):
         _ratio, _amt, _full, _pg = vol_pace()
         if _amt:
             _need = vol_threshold((realtime(["sh000001"]).get("sh000001") or {}).get("price"))
-            _flag = "达标" if _amt >= _need else "不足（需 %.2f 万亿）" % _need
+            _flag = "达标（按推算全天）" if (_full or 0) >= _need else "不足（需 %.2f 万亿）" % _need
             _line = "**📊 量能 %.2f 万亿**（进度 %.0f%%）｜推算全天 **%.2f 万亿**｜该档门槛 %.2f → **%s**" % (
                 _amt, _pg, _full or 0, _need, _flag)
             if _ratio:
@@ -2470,14 +2484,9 @@ if __name__ == "__main__":
                 st_m = load_state()
                 st_m["last_alert_ts"] = datetime.datetime.now(BJ).isoformat()
                 _now = datetime.datetime.now(BJ)
-                # 仅"对策前 30 分钟内"才顺延：10:00-10:29 → 11:00；13:30-13:59 → 14:30
-                for _h, _m0, _m1, _nu in ((10, 0, 30, 11), (13, 30, 60, 14)):
-                    if _now.hour == _h and _m0 <= _now.minute < _m1:
-                        st_m["defer_until"] = _now.replace(hour=_nu, minute=0, second=0).isoformat()
-                        st_m["deferred_pushed"] = False
-                        save_state(st_m)
-                        print("对策前已提前报送，对策顺延至 %02d:00" % _nu)
-                        break
+                # 2026-10-26 用户要求：整点对策（10:30/14:00/14:50）**一律必推，不再顺延**
+                # 原"提前告警 → 顺延对策"规则取消（曾导致 10:30 对策被吞）
+                save_state(st_m)
         else:
             print("未知模式:", mode)
     except Exception:
