@@ -550,6 +550,51 @@ def pool_vs_peer():
     return out
 
 
+def day_progress():
+    """当前时刻的「已成交量占比」（A股日内分布曲线，非时间进度）"""
+    now = datetime.datetime.now(BJ)
+    hm = now.hour * 60 + now.minute
+    if 9 * 60 + 30 <= hm <= 11 * 60 + 30:
+        passed = hm - (9 * 60 + 30)
+    elif 13 * 60 <= hm <= 15 * 60:
+        passed = 120 + (hm - 13 * 60)
+    elif hm > 15 * 60:
+        passed = 240
+    else:
+        passed = 1
+    passed = max(1, min(240, passed))
+    _CURVE = [(15, 0.11), (30, 0.22), (45, 0.29), (60, 0.38), (75, 0.42),
+              (90, 0.46), (105, 0.50), (120, 0.55), (135, 0.60), (150, 0.65),
+              (165, 0.70), (180, 0.76), (195, 0.82), (210, 0.88), (225, 0.94), (240, 1.0)]
+    for _m, _p in _CURVE:
+        if passed <= _m:
+            return _p
+    return 1.0
+
+
+def vs_yesterday(code, r=None):
+    """今日累计量 vs 昨日同期（昨日全天量 × 日内占比）→ 放量/缩量百分比
+    返回 (pct, 昨日同期量说明) ；pct>0 放量，<0 缩量"""
+    try:
+        r = r or (realtime([code]).get(code) or {})
+        today_shares = (r.get("vol") or 0) * 100
+        if not today_shares:
+            return None
+        ks = kline(code, 8)
+        _today = datetime.datetime.now(BJ).strftime("%Y-%m-%d")
+        hist = [b for b in ks if b[0] != _today]
+        if not hist:
+            return None
+        yest = hist[-1][5]
+        prog = day_progress()
+        expect = yest * prog
+        if expect <= 0:
+            return None
+        return (today_shares / expect - 1) * 100
+    except Exception:
+        return None
+
+
 def vol_pace():
     """当前量能 vs 过去 5 日"同进度"量能，返回 (比值, 当前万亿, 推算全天万亿, 进度%)
     盘中任意时刻可用：已过交易分钟 / 240 作为进度"""
@@ -629,7 +674,7 @@ def attack_advice():
         return ""
 
 
-def vp_tag(r):
+def vp_tag(r, code=None):
     """量价判读（用户 2026-10-25：不能只看涨幅，要看量比）
     返回 (标签, 提示)"""
     try:
@@ -1223,8 +1268,12 @@ def build_intraday(tag):
         hot = False
         if sg:
             trend = "空头排列" if sg["kong"] else "非空头"
-            body.append("  · 趋势：%s（MA5 %.3f / MA20 %.3f / MA60 %.3f）｜ 量比 %.2f" % (
-                trend, sg["m5"], sg["m20"], sg["m60"], sg.get("vr", 0)))
+            _vy = vs_yesterday(code, r)
+            _vystr = ("｜ 较昨同期 **%+.0f%%**（%s）" % (_vy, "放量" if _vy >= 0 else "缩量")) if _vy is not None else ""
+            _vpt2, _vph2 = vp_tag(r)
+            _vpstr = ("｜ **%s**：%s" % (_vpt2, _vph2)) if _vpt2 else ""
+            body.append("  · 趋势：%s（MA5 %.3f / MA20 %.3f / MA60 %.3f）｜ 量比 %.2f%s%s" % (
+                trend, sg["m5"], sg["m20"], sg["m60"], r.get("vr") or 0, _vystr, _vpstr))
             if sg["hits"]:
                 for no, desc in sg["hits"]:
                     t2 = "（空头排列中，只观察不执行）" if (no.startswith("B") and sg["kong"]) else ""
@@ -2313,7 +2362,16 @@ def build_monitor():
                         else:
                             act += "（空头排列，只观察；若出现情绪冰点+放量反扑，按反弹交易试仓 1/3）"
                 _vpt, _vph = vp_tag(r)
-                _vpline = ("\n> 量价：**%s**（量比 %.2f）——%s" % (_vpt, r.get("vr", 0), _vph)) if _vpt else ""
+                _vy = vs_yesterday(code, r)
+                _vytxt = ""
+                if _vy is not None:
+                    _vytxt = "｜较昨同期 **%+.0f%%**（%s）" % (_vy, "放量" if _vy >= 0 else "缩量")
+                if _vpt:
+                    _vpline = "\n> 量价：**%s**（量比 %.2f）%s——%s" % (_vpt, r.get("vr", 0), _vytxt, _vph)
+                elif _vytxt:
+                    _vpline = "\n> 量能：%s" % _vytxt.lstrip("｜")
+                else:
+                    _vpline = ""
                 alerts.append(("🔴 <font color=\"red\">**【%s】触发%s【%s %s】**</font>\n现价 %.3f（%+.2f%%）%s" % (
                     name, act, no, desc, r["price"], r["chg"], _vpline), key, "%s|sig" % code))
     save_state(state)
