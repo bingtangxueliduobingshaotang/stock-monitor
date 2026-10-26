@@ -1235,6 +1235,23 @@ def build_intraday(tag):
     except Exception:
         pass
     try:
+        # 上证 5 日线：反弹的短期强弱线（2026-10-26 学自饕餮/邹老师盘面，现价贴 5 日线）
+        _ks = kline("sh000001", 12)
+        _sh = realtime(["sh000001"]).get("sh000001") or {}
+        if len(_ks) >= 6 and _sh:
+            _cl = [b[2] for b in _ks]
+            _ma5 = sum(_cl[-5:]) / 5.0
+            _pos = "上方" if _sh["price"] >= _ma5 else "下方"
+            _gap = (_sh["price"] / _ma5 - 1) * 100
+            lines += ["**📏 上证 5 日线 %.2f**｜现价 %.2f 在其**%s**（%+.2f%%）——跌破 5 日线 = 反弹走弱" % (
+                _ma5, _sh["price"], _pos, _gap), ""]
+            # 三季报密集期提醒（学自邹老师 10-26）
+            _md5 = datetime.datetime.now(BJ).strftime("%m%d")
+            if "1025" <= _md5 <= "1031":
+                lines += ["> ⚠️ **三季报密集期（10-28 前后）+ 28 号解禁 + 周四美联储**：业绩没出的别加；踩雷的反弹到成本先减", ""]
+    except Exception:
+        pass
+    try:
         _ratio, _amt, _full, _pg = vol_pace()
         if _amt:
             _need = vol_threshold((realtime(["sh000001"]).get("sh000001") or {}).get("price"))
@@ -1459,6 +1476,13 @@ def build_close():
     lines = (["## 收盘复盘 + 明日预案（%s）" % today, "", _rline, _rline2, ""] if _rline else
              ["## 收盘复盘 + 明日预案（%s）" % today, ""]) + ([mk, ""] if mk else []) + ["### 今日状态", ""]
     tomorrow = []
+    # 三季报密集期提醒（学自邹老师 10-26：反弹有先后，别踩雷）
+    try:
+        _md = datetime.datetime.now(BJ).strftime("%m%d")
+        if "1025" <= _md <= "1031":
+            tomorrow.append("**⚠️ 三季报密集披露期（10-28 前后）+ 28 号解禁 + 周四美联储**：手上票业绩没出的不要加仓；踩雷的票反弹到成本区先减")
+    except Exception:
+        pass
     layer_rows = []
     for item in POOL:
         code = item["code"]
