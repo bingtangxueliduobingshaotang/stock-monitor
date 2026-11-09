@@ -461,6 +461,14 @@ def volume_pulse(lookback=12, mult=3.5):
 # ===== 策略池量能同比 + 板块对比（2026-10-23 用户要求）=====
 # 板块篮子：策略池标的 → (板块名, [同板块代表股3只], 龙头)
 # 用同板块多只代表股的等权均值作为"板块涨跌"（东财板块接口不稳定，2026-10-25 改）
+# 开盘分歧判定用的**板块参照标的**（2026-11-09 用户实例催生）
+# 为什么需要：2026-11-05 上证低开 -1.07%、科创50 低开 -2.33%、588710 低开 -3.66%，
+# 但 159516 却高开 +1.9% —— 按个股判会得出"高开不能买"，按板块判是"大分歧可打底仓"，结论相反。
+# 规则：个股"一致(高开)"但板块"分歧(低开)" → 以板块为准，标 🟢(板块)
+SECTOR_ETF_REF = {
+    "sz159516": ("sh588710", "科创半导体"),     # 半导体设备ETF → 科创半导体ETF
+}
+
 SECTOR_BASKET = {
     "sz000425": ("工程机械", ["sh600031", "sz000528", "sz000157"], "sh600031"),   # 三一/柳工/中联，龙头三一
     "sh600469": ("轮胎汽零", ["sh601966", "sh601058", "sz002984"], "sh601966"),   # 玲珑/赛轮/森麒麟
@@ -1293,6 +1301,12 @@ def build_intraday(tag):
     try:
         _hm = datetime.datetime.now(BJ).strftime("%H%M")
         if "0925" <= _hm <= "1000":
+            _srt = {}
+            if SECTOR_ETF_REF:
+                try:
+                    _srt = realtime([v[0] for v in SECTOR_ETF_REF.values()])
+                except Exception:
+                    _srt = {}
             _rows = []
             for _it in POOL:
                 if _it.get("skip_pos"):
@@ -1301,10 +1315,22 @@ def build_intraday(tag):
                 if not _r:
                     continue
                 _mode, _sug = open_mode(_r)
+                _ref = SECTOR_ETF_REF.get(_it["code"])
+                if _ref:
+                    _sr = _srt.get(_ref[0]) or {}
+                    if _sr.get("open") and _sr.get("prev"):
+                        _sgap = (_sr["open"] / _sr["prev"] - 1) * 100
+                        if _mode == "一致" and _sgap <= -0.8:
+                            # 个股高开但板块低开 → 按板块判（b40：分歧层级看板块，不看个股）
+                            _mode = "分歧"
+                            _sug = "板块%s低开%.1f%%（本票高开）→ **按板块判=分歧，可小仓低吸**" % (
+                                _ref[1], _sgap)
+                        else:
+                            _sug += "｜板块%s开%+.1f%%" % (_ref[1], _sgap)
                 _icon = {"分歧": "🟢", "一致": "🔴", "转强": "🟡", "中性": "⚪"}.get(_mode, "")
                 _rows.append("  %s **%s**：%s｜%s" % (_icon, _it["name"], _mode, _sug))
             if _rows:
-                lines += ["**🎬 开盘性质（分歧=机会 / 一致=别追）**"] + _rows + [""]
+                lines += ["**🎬 开盘性质（分歧=机会 / 一致=别追；板块与个股不一致时以板块为准）**"] + _rows + [""]
     except Exception:
         pass
     # 详细版：阶段 + 对策 + 量能台阶 + 今日重点（用户 2026-10-25 要求整点写详细）
