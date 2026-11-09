@@ -1271,6 +1271,49 @@ def build_morning():
     return "\n".join(lines)
 
 
+def watershed_check():
+    """b43 分水岭法（强龙 2026-11-04，2026-11-09 学并落地）
+    以 2026-10-23（市场第一次放量日）为分水岭，看每只票"分水岭以来的涨跌"：
+      涨 >= +5%  → 趋势段（创新高的上涨才是利润）
+      -3% ~ +5%  → 横盘（等启动）
+      跌 <= -3%  → 走弱（连"减亏反弹"都算不上）
+    目的：把"今天涨了几个点"换成"它的涨幅基数在哪"，防止把减亏当盈利。
+    """
+    out = []
+    for it in POOL:
+        if it.get("skip_pos"):
+            continue
+        try:
+            ks = kline(it["code"], 30)
+        except Exception:
+            continue
+        if len(ks) < 6:
+            continue
+        idx = None
+        for i, b in enumerate(ks):
+            if b[0] >= "2026-10-23":
+                idx = i
+                break
+        if idx is None or idx >= len(ks):
+            continue
+        base = ks[idx][2]
+        last = ks[-1][2]
+        if not base:
+            continue
+        chg = (last / base - 1) * 100
+        hi = max(b[3] for b in ks[idx:])
+        up_from_base = (hi / base - 1) * 100
+        if chg >= 5:
+            tag = "🟢趋势段"
+        elif chg >= -3:
+            tag = "🟡横盘待启动"
+        else:
+            tag = "🔴走弱"
+        out.append("  %s **%s**：10-23 以来 **%+.1f%%**（期间最高 %+.1f%%）" % (
+            tag, it["name"], chg, up_from_base))
+    return out
+
+
 def open_mode(r):
     """开盘性质判断（2026-11-09 自建：解决"我这票涨4个点算不算分歧"）
     分歧 = 低开+缩量（有人卖、没人抢）→ 可小仓低吸
@@ -1334,6 +1377,14 @@ def build_intraday(tag):
     except Exception:
         pass
     # 详细版：阶段 + 对策 + 量能台阶 + 今日重点（用户 2026-10-25 要求整点写详细）
+    try:
+        _ws = watershed_check()
+        if _ws:
+            lines += ["**🧭 分水岭（10-23 起算）：涨幅的基数在哪**"] + _ws + [
+                "  > 涨 ≥+5% = 趋势段（利润）；-3%~+5% = 横盘；≤-3% = 走弱（连减亏反弹都算不上）【b43】",
+                ""]
+    except Exception:
+        pass
     try:
         _rn, _rname, _rtip, _rpos, _rev = regime()
         lines += ["**📍 阶段 %s·%s**｜仓位上限 %d 成｜%s" % (_rn, _rname, _rpos, _rtip), ""]
