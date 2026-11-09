@@ -1263,10 +1263,50 @@ def build_morning():
     return "\n".join(lines)
 
 
+def open_mode(r):
+    """开盘性质判断（2026-11-09 自建：解决"我这票涨4个点算不算分歧"）
+    分歧 = 低开+缩量（有人卖、没人抢）→ 可小仓低吸
+    一致 = 高开或已涨≥2%（抢筹、没有分歧）→ 追高区，等回踩
+    转强 = 低开后拉回翻红 → 分歧转一致，回踩可跟
+    """
+    if not r.get("open") or not r.get("prev"):
+        return "中性", ""
+    gap = (r["open"] / r["prev"] - 1) * 100
+    if abs(gap) > 12:
+        return "中性", ""
+    chg = r.get("chg") or 0.0
+    vr = r.get("vr") or 1.0
+    if gap <= -0.8 and vr < 1.2:
+        return "分歧", "低开%.1f%%+缩量(量比%.2f) → 可小仓低吸" % (gap, vr)
+    if gap >= 1.5 or chg >= 2.0:
+        return "一致", "开%.1f%%/现%.1f%% → 追高区，不追；等回踩分时均线" % (gap, chg)
+    if gap < -0.3 and chg > 0.3:
+        return "转强", "低开%.1f%%后拉回%.2f%% → 分歧转一致，回踩可跟" % (gap, chg)
+    return "中性", "开%.1f%%/现%.1f%% → 方向不明，等" % (gap, chg)
+
+
 def build_intraday(tag):
     rt = realtime([i["code"] for i in POOL])
     mk = market_line()
     lines = ["## 策略池中盘对策（%s）" % tag, ""] + ([mk, ""] if mk else [])
+    # ===== 开盘性质（9:25-10:00 才有意义，2026-11-09 加）=====
+    try:
+        _hm = datetime.datetime.now(BJ).strftime("%H%M")
+        if "0925" <= _hm <= "1000":
+            _rows = []
+            for _it in POOL:
+                if _it.get("skip_pos"):
+                    continue
+                _r = rt.get(_it["code"])
+                if not _r:
+                    continue
+                _mode, _sug = open_mode(_r)
+                _icon = {"分歧": "🟢", "一致": "🔴", "转强": "🟡", "中性": "⚪"}.get(_mode, "")
+                _rows.append("  %s **%s**：%s｜%s" % (_icon, _it["name"], _mode, _sug))
+            if _rows:
+                lines += ["**🎬 开盘性质（分歧=机会 / 一致=别追）**"] + _rows + [""]
+    except Exception:
+        pass
     # 详细版：阶段 + 对策 + 量能台阶 + 今日重点（用户 2026-10-25 要求整点写详细）
     try:
         _rn, _rname, _rtip, _rpos, _rev = regime()
