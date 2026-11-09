@@ -697,6 +697,41 @@ def vp_tag(r, code=None):
         return "", ""
 
 
+def structure_signal():
+    """底部结构识别（2026-11-09 自建：只看价格与量能，不复述任何人的话）
+    launch = 放量启动后回踩中（买点）；hold = 启动后走强；none = 无结构
+    """
+    try:
+        ks = kline("sh000001", 40)
+        if len(ks) < 25:
+            return "none", ""
+        lows = [float(b[4]) for b in ks]
+        closes = [float(b[2]) for b in ks]
+        vols = [float(b[5]) for b in ks]
+        n = len(ks)
+        win_low = min(lows[-20:])
+        tests = sum(1 for x in lows[-20:] if x <= win_low * 1.015)
+        launch_i = None
+        for i in range(n - 12, n):
+            if i < 6:
+                continue
+            v5 = sum(vols[i-5:i]) / 5.0
+            chg = (closes[i] / closes[i-1] - 1) * 100 if closes[i-1] else 0
+            if vols[i] > v5 * 1.15 and chg > 1.5:
+                launch_i = i
+        if tests < 2 or launch_i is None:
+            return "none", ""
+        dev = (closes[-1] / closes[launch_i] - 1) * 100
+        detail = "近20日%d次探%.0f不破｜放量启动收%.0f｜现价距启动%+.1f%%" % (tests, win_low, closes[launch_i], dev)
+        if dev > 2:
+            return "hold", detail
+        if dev > -3:
+            return "launch", detail
+        return "none", detail
+    except Exception:
+        return "none", ""
+
+
 def regime():
     """返回 (阶段号, 名称, 一句话, 仓位上限成数, 判定证据)"""
     try:
@@ -705,6 +740,13 @@ def regime():
         if not sh or len(ks) < 21:
             return 0, "未知", "", 0, ""
         closes = [b[2] for b in ks]
+        _st, _dt = structure_signal()
+        if _st == "hold":
+            return 7, "反弹确认·走强", "放量启动后已站上启动位", 7, _dt
+        if _st == "launch":
+            _m5 = sum(closes[-5:]) / 5.0
+            _pos = "站在5日线" if sh["price"] >= _m5 else "略破5日线"
+            return 6, "反弹确认·回踩", "放量启动后回踩，" + _pos + "；回踩是买点不是卖点", 5, _dt
         ma5 = sum(closes[-5:]) / 5.0
         ma10 = sum(closes[-10:]) / 10.0
         ma20 = sum(closes[-20:]) / 20.0
