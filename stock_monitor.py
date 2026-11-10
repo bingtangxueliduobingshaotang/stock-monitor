@@ -1271,6 +1271,29 @@ def build_morning():
     return "\n".join(lines)
 
 
+def ma5_first_break(code):
+    """首次失守 5 日线 ≠ 走坏（小寒 2026-11-11 盘前："今天第一次收盘没站上 5 日线，
+    最少还要再观察一天；横盘期最大的风险是把筹码丢掉"）
+    返回提示文本；连续两日跌破才是真走坏。
+    """
+    ks = kline(code, 12)
+    if len(ks) < 7:
+        return ""
+    closes = [b[2] for b in ks]
+
+    def ma5(i):
+        return sum(closes[i - 4:i + 1]) / 5.0
+
+    today_below = closes[-1] < ma5(len(closes) - 1)
+    prev_below = closes[-2] < ma5(len(closes) - 2)
+    if today_below and not prev_below:
+        return ("⚠️ 首次收盘失守 5 日线——小寒：**最少再观察一天**，"
+                "横盘期别急着丢筹码（连续两日站不上才是真走坏）")
+    if today_below and prev_below:
+        return "🚨 **连续 2 日收盘站不上 5 日线**——按纪律该走（小寒/教主同口径）"
+    return ""
+
+
 def breakout_quality(code):
     """b49 缩量突破不算有效突破（饕餮 2026-11-10）
     首次收盘站上 20/60 日线时，比当日量 vs 前 5 日均量：
@@ -1826,6 +1849,9 @@ def build_close():
         try:
             for _bt in breakout_quality(code):
                 lines.append("  · " + _bt)
+            _m5x = ma5_first_break(code)
+            if _m5x:
+                lines.append("  · " + _m5x)
         except Exception:
             pass
         lines.append("")
