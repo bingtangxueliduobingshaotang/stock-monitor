@@ -1271,6 +1271,36 @@ def build_morning():
     return "\n".join(lines)
 
 
+def breakout_quality(code):
+    """b49 缩量突破不算有效突破（饕餮 2026-11-10）
+    首次收盘站上 20/60 日线时，比当日量 vs 前 5 日均量：
+      量 < 90% 均量 → ⚠️ 缩量突破，不可信
+      量 >= 90%   → ✅ 放量突破
+    """
+    ks = kline(code, 70)
+    if len(ks) < 25:
+        return []
+    closes = [b[2] for b in ks]
+    vols = [b[5] for b in ks]
+    last_c, last_v = closes[-1], vols[-1]
+    v5 = sum(vols[-6:-1]) / 5.0 if len(vols) >= 6 else last_v
+    if not v5:
+        return []
+    out = []
+    for n, label in ((20, "20日线"), (60, "60日线")):
+        if len(closes) < n + 1:
+            continue
+        ma = sum(closes[-n:]) / float(n)
+        prev_ma = sum(closes[-n - 1:-1]) / float(n)
+        if last_c > ma and closes[-2] <= prev_ma:
+            _pct = last_v / v5 * 100
+            if last_v < v5 * 0.9:
+                out.append("⚠️ **缩量站上%s**（量仅5日均量 %.0f%%）——按饕餮标准**不算有效突破**" % (label, _pct))
+            else:
+                out.append("✅ 放量站上%s（量 5日均量 %.0f%%）" % (label, _pct))
+    return out
+
+
 def moneyflow(code, days=5):
     """主力资金净额（东财 push2his，单位亿元）—— 2026-11-10 加
     回答"有没有主力建仓/出货"，比只用 K 线量能猜更硬。
@@ -1793,6 +1823,11 @@ def build_close():
         nl = line_of(item, rt)
         lines.append("- 🔴 <font color=\"red\">%s</font>" % nl if hot else "- " + nl)
         lines.extend(body)
+        try:
+            for _bt in breakout_quality(code):
+                lines.append("  · " + _bt)
+        except Exception:
+            pass
         lines.append("")
         for lv in item.get("levels", []):
             arrow = "上破" if lv["type"] == "up" else "跌破"
