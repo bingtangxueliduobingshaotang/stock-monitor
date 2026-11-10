@@ -1271,6 +1271,28 @@ def build_morning():
     return "\n".join(lines)
 
 
+def moneyflow(code, days=5):
+    """主力资金净额（东财 push2his，单位亿元）—— 2026-11-10 加
+    回答"有没有主力建仓/出货"，比只用 K 线量能猜更硬。
+    返回 [(date, 主力净额, 超大单净额), ...]
+    注意：必须用 push2his，push2 只回当天一行。
+    """
+    u = ("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+         "?lmt=0&klt=101&secid=%s&fields1=f1,f2,f3,f7"
+         "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+         % (("1." if code.startswith("sh") else "0.") + code[2:]))
+    d = json.loads(http_get(u))
+    rows = []
+    for line in ((d.get("data") or {}).get("klines") or [])[-days:]:
+        p = line.split(",")
+        if len(p) >= 6:
+            try:
+                rows.append((p[0], float(p[1]) / 1e8, float(p[5]) / 1e8))
+            except Exception:
+                continue
+    return rows
+
+
 def watershed_check():
     """b43 分水岭法（强龙 2026-11-04，2026-11-09 学并落地）
     以 2026-10-23（市场第一次放量日）为分水岭，看每只票"分水岭以来的涨跌"：
@@ -1791,6 +1813,43 @@ def build_close():
                 lines.append("- **%s** 今日 **%.2f 亿** ｜ 较昨日同期 **%+.0f%%** %s ｜ 预计全天 **%.2f 亿**"
                              % (_n, _a, (_pct or 0), _flag, _est or 0))
             lines.append("- **池内合计 %.2f 亿**" % sum(r[1] for r in _rows))
+    except Exception:
+        pass
+    # ===== 主力资金流向（2026-11-10 用户要求加进 16:30 复盘）=====
+    try:
+        _mf = []
+        for _it in POOL:
+            try:
+                _mrows = moneyflow(_it["code"], 5)
+            except Exception:
+                _mrows = []
+            if not _mrows:
+                continue
+            _sum = sum(r[1] for r in _mrows)
+            _today = _mrows[-1][1]
+            _pos = sum(1 for r in _mrows if r[1] > 0)
+            if _sum >= 1:
+                _tag = "🟢净流入"
+            elif _sum <= -1:
+                _tag = "🔴净流出"
+            else:
+                _tag = "➖基本平衡"
+            _streak = 0
+            for r in reversed(_mrows):
+                if (r[1] < 0 and _sum < 0) or (r[1] > 0 and _sum >= 0):
+                    _streak += 1
+                else:
+                    break
+            _extra = ""
+            if _sum <= -1 and _streak >= 2:
+                _extra = "｜**连续 %d 日流出**" % _streak
+            elif _sum >= 1 and _streak >= 2:
+                _extra = "｜连续 %d 日流入" % _streak
+            _mf.append("- **%s** 近%d日 **%+.2f 亿**｜今日 **%+.2f 亿**｜流入 %d/%d 天 %s%s"
+                       % (_it["name"], len(_mrows), _sum, _today, _pos, len(_mrows), _tag, _extra))
+        if _mf:
+            lines += ["", "### 主力资金（近5日，亿元）", ""] + _mf + [
+                "- > 5日累计 >+1亿=净流入｜<-1亿=净流出｜中间=平衡；**连续 2 日同向**才叫建仓/出货"]
     except Exception:
         pass
     try:
