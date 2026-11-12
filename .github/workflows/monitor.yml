@@ -24,6 +24,12 @@ on:
         default: ""
 
 
+# 分钟级告警（mode=fast）每 60 秒触发一次，单次约 30 秒。
+# cancel-in-progress 保证：上一次没跑完时，新的直接顶掉它，**不会堆积**。
+concurrency:
+  group: monitor-${{ github.event.inputs.mode || 'sched' }}
+  cancel-in-progress: true
+
 jobs:
   run:
     runs-on: ubuntu-latest
