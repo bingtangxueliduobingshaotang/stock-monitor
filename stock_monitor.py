@@ -16,6 +16,7 @@ import time
 import os
 import sys
 import urllib.request
+import base64
 import datetime
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -1177,13 +1178,57 @@ def push(title, content):
     # 邮件通道已按要求下线：日常只推微信（邮箱仅用于发《焚绝》）
 
 
+# ===== 状态持久化（2026-11-12 修「重复播报」）=====
+# 根因：原来靠 actions/cache 传 state，两次运行间隔 5 分钟时前一次的 cache 还没落盘，
+# 后一次恢复的是旧 state → 同一个破位被反复播报。
+# 改为把 state 存进仓库文件（用 Actions 自带的 GITHUB_TOKEN 读写），强一致、无竞态。
+_STATE_REMOTE = "state/last_alerts.json"
+
+
+def _gh_call(method, data=None):
+    """读写仓库里的 state 文件；没 token（本地跑）返回 None，由调用方回退本地文件"""
+    tok = os.environ.get("GH_TOKEN")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not tok or not repo:
+        return None
+    url = "https://api.github.com/repos/%s/contents/%s" % (repo, _STATE_REMOTE)
+    hdr = {"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json",
+           "User-Agent": "stock-monitor", "X-GitHub-Api-Version": "2022-11-28"}
+    try:
+        if method == "GET":
+            r = urllib.request.Request(url, headers=hdr)
+            d = json.loads(urllib.request.urlopen(r, timeout=15).read().decode())
+            return json.loads(base64.b64decode(d["content"]).decode("utf-8")), d.get("sha")
+        else:
+            cur = None
+            try:
+                r = urllib.request.Request(url, headers=hdr)
+                cur = json.loads(urllib.request.urlopen(r, timeout=15).read().decode()).get("sha")
+            except Exception:
+                cur = None
+            payload = {"message": "state: auto", "content": base64.b64encode(data).decode()}
+            if cur:
+                payload["sha"] = cur
+            r = urllib.request.Request(url, method="PUT", headers=hdr,
+                                       data=json.dumps(payload).encode())
+            urllib.request.urlopen(r, timeout=15).read()
+            return True, None
+    except Exception:
+        return None
+
+
 def load_state():
     today = datetime.datetime.now(BJ).date().isoformat()
     month = today[:7]
-    try:
-        s = json.load(open(STATE_FILE, encoding="utf-8"))
-    except Exception:
-        s = {}
+    s = None
+    _r = _gh_call("GET")
+    if _r and isinstance(_r[0], dict):
+        s = _r[0]
+    if s is None:
+        try:
+            s = json.load(open(STATE_FILE, encoding="utf-8"))
+        except Exception:
+            s = {}
     if s.get("date") != today:
         s["fired"] = []
         s["ref_cnt"] = 0        # 参考类信号当日计数（降噪用）
@@ -1196,9 +1241,20 @@ def load_state():
     return s
 
 
+_STATE_SHA = [None]
+
+
 def save_state(s):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    json.dump(s, open(STATE_FILE, "w", encoding="utf-8"), ensure_ascii=False)
+    # 先写本地（保底），再尝试写远端（云端生效的那份）
+    try:
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        json.dump(s, open(STATE_FILE, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+    try:
+        _gh_call("PUT", json.dumps(s, ensure_ascii=False).encode("utf-8"))
+    except Exception:
+        pass
 
 
 # ---------------- 报告生成 ----------------
@@ -2490,6 +2546,14 @@ def build_fast():
         for lv in it.get("levels", []):
             key = "fast|%s|%s|%s" % (it["code"], lv["type"], lv["price"])
             _, fired = level_status(r["price"], lv)
+            # 穿越判定（2026-11-12 修重复播报）：只在"今天第一次从另一侧穿过来"时报
+            # 前收已在同侧 = 早就破了/早就在上方，不再重复报（那种持续状态交给 pending 块）
+            prev = r.get("prev")
+            if fired and prev:
+                if lv["type"] == "down" and prev < lv["price"]:
+                    fired = False
+                if lv["type"] == "up" and prev >= lv["price"]:
+                    fired = False
             if fired and key not in state["fired"]:
                 state["fired"].append(key)
                 alerts.append("🔴 **%s %.3f** %s **%.3f** → %s（【%s】）" % (
