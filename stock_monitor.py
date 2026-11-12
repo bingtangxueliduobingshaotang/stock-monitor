@@ -19,7 +19,14 @@ import urllib.request
 import datetime
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-CFG = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
+# 配置来源（2026-11-12 为「转 public」改造）：
+#   优先读环境变量 CONFIG_JSON（GitHub Secret，仓库公开后别人也看不到）
+#   没有则退回同目录 config.json（本地调试用；公开前必须删掉）
+_cj = os.environ.get("CONFIG_JSON")
+if _cj and _cj.strip():
+    CFG = json.loads(_cj)
+else:
+    CFG = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
 TOKEN = os.environ.get("PUSHPLUS_TOKEN") or CFG.get("pushplus_token", "")
 POOL = CFG["pool"]
 STATE_FILE = os.path.join(BASE, "state", "last_alerts.json")
