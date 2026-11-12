@@ -119,6 +119,9 @@ def in_window(mode, t=None):
         return (925 <= t <= 1130) or (1300 <= t <= 1500)   # 9:25 起（20 分前可撤单，25 分才是定价）
     if mode == "intraday":
         return 925 <= t <= 1505
+    if mode == "fast":
+        # 分钟级告警：只在连续竞价时段（9:30-11:30 / 13:00-15:00）
+        return (930 <= t <= 1130) or (1300 <= t <= 1500)
     if mode == "close":
         return 1500 <= t <= 1800
     return True
@@ -1085,11 +1088,16 @@ def save_archive(kind, content):
 
 
 def pending_block():
-    """未确认提醒块（2026-11-12 用户要求：给了提醒但没反馈 → 每次都重复，直到回执）
+    """条件跟踪块（2026-11-12 用户要求改版）
 
-    数据来自仓库根目录 pending.json，格式：
-      {"items":[{"id","code","name","text","since":"YYYY-MM-DD","done":false}]}
-    用户说"XX 已处理" → 把对应项 done 改 true（我这边改文件并推送）。
+    用户原话：「我没办法当场告诉你是否执行，有时有自己的考量没执行；
+    你既给出建议，我执不执行又不影响你的判断。」
+
+    → 所以这里**不是待办清单，是状态跟踪**：
+      · 每条带一个价格条件（cond）。按现价自动判断还成不成立
+      · 成立 → 报今天的实际状态，附一次建议（不催）
+      · 不成立 → 自动显示"已解除"并消失，**不需要用户回复任何东西**
+      · 用户主动说"XX 已处理"时，才把 done 改 true 手动移除
     """
     p = os.path.join(BASE, "pending.json")
     if not os.path.exists(p):
@@ -1101,18 +1109,42 @@ def pending_block():
     items = [x for x in (d.get("items") or []) if not x.get("done")]
     if not items:
         return ""
+    try:
+        rt = realtime([x["code"] for x in items if x.get("code")])
+    except Exception:
+        rt = {}
     today = datetime.datetime.now(BJ).date()
-    lines = ["", "---", "", "## ⏳ 待你确认（%d 条｜没回执就一直提醒）" % len(items), ""]
+    rows, cleared = [], []
     for x in items:
+        cur = (rt.get(x.get("code")) or {}).get("price") if x.get("code") else None
+        cond = x.get("cond")
+        alive = True
+        if cond and cur is not None:
+            alive = (cur < cond["price"]) if cond.get("op") == "lt" else (cur > cond["price"])
+        if not alive:
+            cleared.append("- ✅ **%s** 条件已解除（现价 %.3f，不再处于 %s %.3f 区间）"
+                           % (x.get("name", ""), cur, "低于" if cond.get("op") == "lt" else "高于",
+                              cond["price"]))
+            continue
         try:
             d0 = datetime.date.fromisoformat(str(x.get("since") or "")[:10])
             days = (today - d0).days + 1
         except Exception:
             days = 1
-        lines.append("- **%s**：%s" % (x.get("name", ""), x.get("text", "")))
-        lines.append("  - 已提醒 **%d 天**（自 %s）" % (days, x.get("since", "")))
-    lines += ["", "> 处理完回我一句「**XX 已处理**」，我就把这条撤掉，不再提醒你。"]
-    return "\n".join(lines)
+        pos = "" if cur is None else "现价 **%.3f**｜" % cur
+        rows.append("**%s** ｜%s第 %d 天" % (x.get("name", ""), pos, days))
+        rows.append("  · 状态：%s" % x.get("text", ""))
+        rows.append("  · 看法：%s" % x.get("advice", ""))
+        rows.append("")
+    if not rows and not cleared:
+        return ""
+    out = ["", "---", "", "## 📌 状态跟踪（不是催你操作）"]
+    out += rows
+    out += cleared
+    if rows:
+        out += ["", "> 这几条**只看价格，不看你的决定**。条件不再成立时会自动消失，你不用回复。"
+                    "真处理完了说一句「XX 已处理」，我直接划掉。"]
+    return "\n".join(out)
 
 
 def push(title, content):
@@ -2431,6 +2463,44 @@ def pick_line():
     return "\n".join(lines)
 
 
+def build_fast():
+    """分钟级纯价位告警（2026-11-12 加，配合 cron 每 1 分钟）
+
+    为什么单独做：build_monitor 要拉多只 K 线算指标，单次要 13-14 秒，
+    1 分钟一次会重叠。fast 只比对 config 里预设的价位 + 现价，2 秒内跑完。
+    指标型信号（银行/券商 5 日线、量能台阶）仍由 15 分钟的 monitor 负责。
+    """
+    state = load_state()
+    rt = realtime([i["code"] for i in POOL])
+    alerts = []
+    mk = realtime(["sh000001"]).get("sh000001")
+    if mk:
+        for lv in CFG.get("market", {}).get("levels", []):
+            key = "fast|mk|%s|%s" % (lv["type"], lv["price"])
+            _, fired = level_status(mk["price"], lv)
+            if fired and key not in state["fired"]:
+                state["fired"].append(key)
+                alerts.append("🔴 **上证 %.2f** %s **%.0f** → %s（【%s】）" % (
+                    mk["price"], "上破" if lv["type"] == "up" else "跌破",
+                    lv["price"], lv["desc"], lv.get("ref", "")))
+    for it in POOL:
+        r = rt.get(it["code"])
+        if not r:
+            continue
+        for lv in it.get("levels", []):
+            key = "fast|%s|%s|%s" % (it["code"], lv["type"], lv["price"])
+            _, fired = level_status(r["price"], lv)
+            if fired and key not in state["fired"]:
+                state["fired"].append(key)
+                alerts.append("🔴 **%s %.3f** %s **%.3f** → %s（【%s】）" % (
+                    it["name"], r["price"], "上破" if lv["type"] == "up" else "跌破",
+                    lv["price"], lv["desc"], lv.get("ref", "")))
+            elif not fired and key in state["fired"]:
+                state["fired"].remove(key)      # 回到位内 → 解除，下次可再报
+    save_state(state)
+    return "\n\n".join(alerts) if alerts else None
+
+
 def build_monitor():
     """盘中监控：仅在有新触发时返回内容，否则 None"""
     state = load_state()
@@ -2892,7 +2962,9 @@ def build_monitor():
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "intraday"
     # P1 防限流：随机抖动 0~20s，避开与其它任务的整点碰撞
-    time.sleep(random.uniform(0, 20))
+    # fast 模式（每分钟）不抖：白等会直接把间隔吃掉
+    if mode != "fast":
+        time.sleep(random.uniform(0, 20))
     now = datetime.datetime.now(BJ).strftime("%m-%d %H:%M")
     try:
         if not is_trading_day():
@@ -2901,8 +2973,20 @@ if __name__ == "__main__":
         if not in_window(mode):
             print("[%s] 非有效时段，静默退出防误报（mode=%s）" % (now, mode))
             sys.exit(0)
+        # 配置自检：POOL 为空 = Secret 没读到，监控形同虚设，必须让它红
+        if not POOL:
+            print("[FATAL] POOL 为空：GitHub Secret CONFIG_JSON 可能读取失败，监控已失效")
+            push("【系统异常·监控已失效】" + now,
+                 "**POOL 为空**：读不到策略池配置。\n\n多半是 Secret `CONFIG_JSON` 缺失或失效。\n在恢复之前，**所有告警都不会触发**。")
+            sys.exit(1)
         if mode == "morning":
             push("【今日盯防】" + now, build_morning())
+        elif mode == "fast":
+            _c = build_fast()
+            if _c:
+                push("【触发告警·分钟级】" + now, _c)
+            else:
+                print("[%s] fast 无触发" % now)
         elif mode == "intraday":
             hm = datetime.datetime.now(BJ).strftime("%H:%M")
             st_i = load_state()
