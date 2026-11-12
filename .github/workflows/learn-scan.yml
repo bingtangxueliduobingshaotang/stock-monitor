@@ -1,0 +1,20 @@
+name: learn-scan
+
+# 每天扫一遍 B站 4 家有没有新课（2026-11-12 建）
+# 为什么不放 GitHub 自带 schedule：本仓库的 schedule 有 ~7h50m 固定延迟，
+# 会变成凌晨推送扰民。统一由 cron-job.org 在 17:30 准点触发 workflow_dispatch。
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan new videos
+        env:
+          BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          DAYS: "3"
+        run: python3 scan_learn.py
