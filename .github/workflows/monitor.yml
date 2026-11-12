@@ -30,6 +30,9 @@ concurrency:
   group: monitor-${{ github.event.inputs.mode || 'sched' }}
   cancel-in-progress: true
 
+permissions:
+  contents: write     # 让 GITHUB_TOKEN 能回写 state/last_alerts.json（去重靠它）
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -48,6 +51,8 @@ jobs:
         env:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           SCHEDULE: ${{ github.event.schedule }}
           MANUAL: ${{ github.event.inputs.mode }}
           EXT_GUARD: ${{ github.event.inputs.ext }}
