@@ -204,9 +204,31 @@ def signals(bars):
             "zf": zf * 100, "vr": round(vr, 2), "date": bars[i][0]}
 
 
+def ma_price(code, n):
+    """算 N 日均线价（给 config 里的 {"ma":5} 动态关键位用）
+    为什么需要：写死的"5日线 6.90"每天都会变，硬编码第二天就失效。
+    """
+    try:
+        ks = kline(code, n + 4)
+        if len(ks) < n:
+            return None
+        return sum(b[2] for b in ks[-n:]) / float(n)
+    except Exception:
+        return None
+
+
+def level_price(code, lv):
+    """取关键位的实际价格：写了 ma 就现算，否则用 price"""
+    if lv.get("ma"):
+        _p = ma_price(code, int(lv["ma"]))
+        if _p:
+            return _p
+    return lv.get("price")
+
+
 def level_status(price, lv):
     """关键位状态"""
-    p = lv["price"]
+    p = lv.get("_px") or lv["price"]
     if lv["type"] == "down":
         if price < p:
             return "跌破", True
@@ -1343,7 +1365,7 @@ def build_morning():
         base = r["price"] if _t < 915 else r["prev"]
         watches = []
         for lv in item.get("levels", []):
-            p = lv["price"]
+            p = lv.get("_px") or lv["price"]
             try:
                 dist = abs(p / base - 1)
             except Exception:
@@ -2547,7 +2569,11 @@ def build_fast():
         if not r:
             continue
         for lv in it.get("levels", []):
-            key = "fast|%s|%s|%s" % (it["code"], lv["type"], lv["price"])
+            _px = level_price(it["code"], lv)
+            if not _px:
+                continue
+            lv = dict(lv, _px=_px)
+            key = "fast|%s|%s|%.4f" % (it["code"], lv["type"], _px)
             _, fired = level_status(r["price"], lv)
             # 穿越判定（2026-11-12 修重复播报）：只在"今天第一次从另一侧穿过来"时报
             # 前收已在同侧 = 早就破了/早就在上方，不再重复报（那种持续状态交给 pending 块）
