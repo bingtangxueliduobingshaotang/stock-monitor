@@ -1084,6 +1084,37 @@ def save_archive(kind, content):
     print("===ARCHIVE-BODY-END %s===" % fn)
 
 
+def pending_block():
+    """未确认提醒块（2026-11-12 用户要求：给了提醒但没反馈 → 每次都重复，直到回执）
+
+    数据来自仓库根目录 pending.json，格式：
+      {"items":[{"id","code","name","text","since":"YYYY-MM-DD","done":false}]}
+    用户说"XX 已处理" → 把对应项 done 改 true（我这边改文件并推送）。
+    """
+    p = os.path.join(BASE, "pending.json")
+    if not os.path.exists(p):
+        return ""
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return ""
+    items = [x for x in (d.get("items") or []) if not x.get("done")]
+    if not items:
+        return ""
+    today = datetime.datetime.now(BJ).date()
+    lines = ["", "---", "", "## ⏳ 待你确认（%d 条｜没回执就一直提醒）" % len(items), ""]
+    for x in items:
+        try:
+            d0 = datetime.date.fromisoformat(str(x.get("since") or "")[:10])
+            days = (today - d0).days + 1
+        except Exception:
+            days = 1
+        lines.append("- **%s**：%s" % (x.get("name", ""), x.get("text", "")))
+        lines.append("  - 已提醒 **%d 天**（自 %s）" % (days, x.get("since", "")))
+    lines += ["", "> 处理完回我一句「**XX 已处理**」，我就把这条撤掉，不再提醒你。"]
+    return "\n".join(lines)
+
+
 def push(title, content):
     if not TOKEN:
         print("[WARN] 未配置 PUSHPLUS_TOKEN，跳过推送")
@@ -1098,6 +1129,7 @@ def push(title, content):
                               "time": datetime.datetime.now(BJ).strftime("%H:%M"),
                               "title": title, "brief": content.split("\n")[0][:80]}])[-5:]
     save_state(st)
+    content += pending_block()
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
                        "template": "markdown"}).encode("utf-8")
