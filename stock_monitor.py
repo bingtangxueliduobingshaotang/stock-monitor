@@ -1162,7 +1162,10 @@ def push(title, content):
                               "time": datetime.datetime.now(BJ).strftime("%H:%M"),
                               "title": title, "brief": content.split("\n")[0][:80]}])[-5:]
     save_state(st)
-    content += pending_block()
+    # 分钟级告警不带"状态跟踪"（2026-11-12 用户反馈"很多重复播报"）：
+    # 那是长篇状态块，跟着每分钟的告警一起发 = 刷屏。只让对策/复盘类推送带它。
+    if "分钟级" not in title:
+        content += pending_block()
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
                        "template": "markdown"}).encode("utf-8")
