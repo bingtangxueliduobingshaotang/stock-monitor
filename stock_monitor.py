@@ -2564,7 +2564,9 @@ def build_fast():
                     lv["price"], lv["desc"], lv.get("ref", "")))
             elif not fired and key in state["fired"]:
                 state["fired"].remove(key)      # 回到位内 → 解除，下次可再报
-    save_state(state)
+    # 只在真有告警时落盘：state 存在仓库里，每次都写 = 每分钟一个 commit，把历史灌满
+    if alerts:
+        save_state(state)
     return "\n\n".join(alerts) if alerts else None
 
 
