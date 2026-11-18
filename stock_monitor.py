@@ -1164,9 +1164,6 @@ def pending_block():
     out = ["", "---", "", "## 📌 状态跟踪（不是催你操作）"]
     out += rows
     out += cleared
-    if rows:
-        out += ["", "> 这几条**只看价格，不看你的决定**。条件不再成立时会自动消失，你不用回复。"
-                    "真处理完了说一句「XX 已处理」，我直接划掉。"]
     return "\n".join(out)
 
 
@@ -1184,9 +1181,9 @@ def push(title, content):
                               "time": datetime.datetime.now(BJ).strftime("%H:%M"),
                               "title": title, "brief": content.split("\n")[0][:80]}])[-5:]
     save_state(st)
-    # 分钟级告警不带"状态跟踪"（2026-11-12 用户反馈"很多重复播报"）：
-    # 那是长篇状态块，跟着每分钟的告警一起发 = 刷屏。只让对策/复盘类推送带它。
-    if "分钟级" not in title:
+    # 状态跟踪只在收盘复盘里出现（2026-11-18 用户：每天看好几次，烦）
+    # 分钟级告警、盘中对策一律不带；告警本身已经说明问题了
+    if "复盘" in title:
         content += pending_block()
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
