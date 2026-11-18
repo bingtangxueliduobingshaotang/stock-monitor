@@ -1156,6 +1156,100 @@ def stock_themes(code):
     return out
 
 
+# ===== 主线归组（回答"这波是什么在带"）=====
+# 板块名 -> 大类。用户 2026-11-18："券商和金融科技一起拉，你得知道它们是同一条线"
+SECTOR_GROUP = [
+    ("金融", ["证券", "券商", "银行", "保险", "多元金融", "金融科技", "互联网金融"]),
+    ("AI算力", ["通信", "光模块", "CPO", "算力", "数据中心", "IDC", "PCB", "服务器", "印制电路"]),
+    ("半导体", ["半导体", "芯片", "集成电路", "存储", "封测", "电子元件", "光学光电子", "消费电子"]),
+    ("新能源", ["光伏", "储能", "电池", "锂", "风电", "新能源", "电力设备", "电网"]),
+    ("医药", ["创新药", "医药", "医疗", "中药", "生物制品", "CXO", "化学制药"]),
+    ("军工", ["军工", "航空", "航天", "船舶", "国防"]),
+    ("资源", ["稀土", "有色", "煤炭", "石油", "贵金属", "化学", "钢铁", "小金属"]),
+    ("消费", ["白酒", "食品", "家电", "旅游", "酒店", "商业百货", "纺织", "农牧", "饮料"]),
+    ("地产基建", ["房地产", "建筑", "水泥", "建材", "工程", "装修"]),
+    ("AI应用", ["传媒", "游戏", "影视", "文化", "互联网服务", "软件", "计算机"]),
+]
+
+
+def sector_group(name):
+    for g, kws in SECTOR_GROUP:
+        if any(k in name for k in kws):
+            return g
+    return "其他"
+
+
+def sector_raw(min_pct=2.0, top=8):
+    """取异动板块的结构化数据：[(板块名, 涨幅, 龙头名, 龙头代码, 龙头涨幅, 龙头成交额亿, 标签)]"""
+    rows = []
+    try:
+        u = ("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2"
+             "&fid=f3&fs=m:90+t:2&fields=f3,f12,f14")
+        d = json.loads(http_get(u))
+        items = (d.get("data") or {}).get("diff") or []
+    except Exception:
+        return rows
+    cand = [x for x in items if (x.get("f3") or 0) >= min_pct][:top]
+    for x in cand:
+        bk, nm, pct = x.get("f12"), x.get("f14"), x.get("f3") or 0
+        if not bk:
+            continue
+        mem = []
+        for _ in range(2):
+            try:
+                d2 = json.loads(http_get("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10&po=1&np=1"
+                                         "&fltt=2&invt=2&fid=f3&fs=b:%s&fields=f2,f3,f12,f14,f6" % bk))
+                mem = (d2.get("data") or {}).get("diff") or []
+                if mem:
+                    break
+            except Exception:
+                pass
+        if not mem:
+            continue
+        c5 = [m for m in mem if (m.get("f3") or 0) >= 5]
+        lead = max(c5, key=lambda m: m.get("f6") or 0) if c5 else mem[0]
+        rows.append((nm, pct, lead.get("f14"), str(lead.get("f12") or ""),
+                     lead.get("f3") or 0, (lead.get("f6") or 0) / 1e8, stock_themes(str(lead.get("f12") or ""))))
+    return rows
+
+
+def mainline_block(min_pct=2.0):
+    """把异动板块按"大类"归到一起，输出当天主线
+
+    用户 2026-11-18："假如盘中券商、金融科技突然拉升，你得总结出它们的共通性"
+    → 同一大类里 ≥2 个板块同时异动 = 一条主线在动，不是孤立异动。
+    """
+    rows = sector_raw(min_pct)
+    if not rows:
+        return []
+    groups = {}
+    for nm, pct, ln, lc, lp, la, tags in rows:
+        groups.setdefault(sector_group(nm), []).append((nm, pct, ln, lp, la, tags))
+    # 主线按"组内板块数"+"平均涨幅"排序
+    ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), -sum(x[1] for x in kv[1]) / len(kv[1])))
+    out = ["", "### 今日主线（按板块归组）", ""]
+    for g, members in ranked:
+        if g == "其他" and len(members) < 2:
+            continue
+        avg = sum(m[1] for m in members) / len(members)
+        heads = "、".join("%s %+.1f%%" % (m[0], m[1]) for m in members[:4])
+        lead = max(members, key=lambda m: m[4])           # 组内涨幅最高的龙头
+        tag_cnt = {}
+        for m in members:
+            for t in m[5]:
+                tag_cnt[t] = tag_cnt.get(t, 0) + 1
+        common = [t for t, c in sorted(tag_cnt.items(), key=lambda kv: -kv[1]) if c >= 2][:2]
+        flag = "🔥" if len(members) >= 2 else "·"
+        line = "%s **%s**（%d 个板块｜均 %+.1f%%）\n   %s\n   领涨：%s %+.1f%%" % (
+            flag, g, len(members), avg, heads, lead[2], lead[3])
+        if common:
+            line += "\n   **共性标签：%s**（多条线都指向它）" % " / ".join(common)
+        out.append("- " + line)
+    if len(out) <= 3:
+        return []
+    return out + ["- > 🔥 = 同组 ≥2 个板块同时异动，才算一条主线；单个板块涨只算异动"]
+
+
 def sector_alert(min_pct=2.5, top=3):
     """板块异动 + 龙头（2026-11-18 用户要求）
 
@@ -3198,7 +3292,7 @@ if __name__ == "__main__":
                 except Exception:
                     pass
             _ci = build_intraday(now)
-            _sb = sector_block()
+            _sb = mainline_block() or sector_block()   # 优先给"主线"，取不到退回板块列表
             if _sb:
                 _ci += "\n" + "\n".join(_sb)
             push("【策略池对策】" + now, _ci)
@@ -3209,7 +3303,7 @@ if __name__ == "__main__":
                 save_archive("周复盘", _c)
             else:
                 _c = build_close()
-                _sb = sector_block()
+                _sb = mainline_block() or sector_block()
                 if _sb:
                     _c += "\n" + "\n".join(_sb)
                 push("【收盘复盘+明日预案】" + now, _c)
