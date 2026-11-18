@@ -1110,6 +1110,61 @@ def save_archive(kind, content):
     print("===ARCHIVE-BODY-END %s===" % fn)
 
 
+def sector_alert(min_pct=2.5, top=3):
+    """板块异动 + 龙头（2026-11-18 用户要求）
+
+    用户原话："以后看到板块的异动，你再告诉我，同时告诉我板块里面哪个是龙头。"
+    → 不只报策略池那几只，而是**全市场行业板块**里异动的那几个，并指出谁在带队。
+
+    龙头判定（不能只看涨幅第一，小盘妖股经常蹦到第一）：
+      在"涨幅 ≥5%"的候选里，**取成交额最大的** = 资金真正认可的那只。
+    """
+    out = []
+    try:
+        u = ("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2"
+             "&fid=f3&fs=m:90+t:2&fields=f2,f3,f12,f14")
+        d = json.loads(http_get(u))
+        items = (d.get("data") or {}).get("diff") or []
+        if not items:
+            return out
+        ups = [x for x in items if (x.get("f3") or 0) >= min_pct][:top]
+        dns = [x for x in items if (x.get("f3") or 0) <= -min_pct]
+        dns = dns[-top:] if len(dns) > top else dns
+        for x, arrow in ([(i, "🔺") for i in ups] + [(i, "🔻") for i in dns]):
+            bk, nm, pct = x.get("f12"), x.get("f14"), x.get("f3") or 0
+            if not bk:
+                continue
+            try:
+                u2 = ("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10&po=1&np=1&fltt=2&invt=2"
+                      "&fid=f3&fs=b:%s&fields=f2,f3,f12,f14,f6" % bk)
+                d2 = json.loads(http_get(u2))
+                mem = (d2.get("data") or {}).get("diff") or []
+            except Exception:
+                mem = []
+            if not mem:
+                continue
+            # 龙头：涨幅≥5% 里成交额最大的
+            cand = [m for m in mem if (m.get("f3") or 0) >= 5]
+            lead = max(cand, key=lambda m: m.get("f6") or 0) if cand else mem[0]
+            followers = [m for m in mem[:3] if m.get("f12") != lead.get("f12")][:2]
+            line = "%s **%s %+.2f%%** ｜龙头 **%s %s %+.2f%%**（成交 %.1f 亿）" % (
+                arrow, nm, pct, lead.get("f14"), lead.get("f12"),
+                lead.get("f3") or 0, (lead.get("f6") or 0) / 1e8)
+            if followers:
+                line += "\n   跟风：" + "｜".join("%s %+.1f%%" % (f.get("f14"), f.get("f3") or 0) for f in followers)
+            out.append(line)
+    except Exception:
+        pass
+    return out
+
+
+def sector_block(min_pct=2.5):
+    rows = sector_alert(min_pct)
+    if not rows:
+        return []
+    return ["", "### 板块异动（%+.1f%% 以上）" % min_pct, ""] + ["- " + r for r in rows] + \
+           ["- > 龙头＝涨幅≥5% 里成交额最大的那只（不是涨幅第一）"]
+
 def pending_block():
     """条件跟踪块（2026-11-12 用户要求改版）
 
@@ -3093,7 +3148,11 @@ if __name__ == "__main__":
                         sys.exit(0)
                 except Exception:
                     pass
-            push("【策略池对策】" + now, build_intraday(now))
+            _ci = build_intraday(now)
+            _sb = sector_block()
+            if _sb:
+                _ci += "\n" + "\n".join(_sb)
+            push("【策略池对策】" + now, _ci)
         elif mode == "close":
             if datetime.datetime.now(BJ).weekday() == 4:      # 周五 → 周复盘
                 _c = build_week()
@@ -3101,6 +3160,9 @@ if __name__ == "__main__":
                 save_archive("周复盘", _c)
             else:
                 _c = build_close()
+                _sb = sector_block()
+                if _sb:
+                    _c += "\n" + "\n".join(_sb)
                 push("【收盘复盘+明日预案】" + now, _c)
                 save_archive("日复盘", _c)
         elif mode == "monitor":
