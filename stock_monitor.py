@@ -1110,6 +1110,52 @@ def save_archive(kind, content):
     print("===ARCHIVE-BODY-END %s===" % fn)
 
 
+# 主线关键词（带权重：越能说明"这波在炒什么"的权重越高）
+THEME_KW = [("算力", 10), ("昇腾", 10), ("智算", 10), ("IDC", 9), ("数据中心", 9),
+            ("华为", 9), ("国产替代", 9), ("自主可控", 9), ("CPO", 8), ("光模块", 8),
+            ("HBM", 8), ("PCB", 7), ("存储", 7), ("先进封装", 7), ("AI应用", 6),
+            ("机器人", 6), ("固态电池", 6), ("创新药", 6), ("量子", 6), ("低空", 5),
+            ("军工", 5), ("稀土", 5), ("数据要素", 5), ("证券", 4), ("银行", 4),
+            ("消费", 3), ("电力", 3), ("煤炭", 3), ("光伏", 3), ("储能", 3)]
+
+
+def stock_themes(code):
+    """查个股的概念标签（东财 f129），只挑命中主线关键词的
+
+    2026-11-18 用户要求："告诉我大盘现在带领它的是什么——是华为系、达链，还是国产替代逻辑"
+    → 板块名只说"通信服务"，f129 才能说出"算力租赁/华为概念/数据中心"。
+    """
+    secid = ("1." if code[:1] in ("6", "5") else "0.") + code
+    tags = []
+    for _i in range(3):                      # 东财偶发断连，重试
+        try:
+            d = json.loads(http_get("https://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f129" % secid))
+            tags = ((d.get("data") or {}).get("f129") or "").split(",")
+            if tags and tags[0]:
+                break
+        except Exception:
+            pass
+        import time as _t
+        _t.sleep(1.2)
+    scored = []
+    for t in tags:
+        if not t:
+            continue
+        for k, w in THEME_KW:
+            if k in t:
+                scored.append((w, t))
+                break
+    scored.sort(key=lambda x: -x[0])          # 权重高的在前（算力 > 华为 > 光伏）
+    out, seen = [], set()
+    for _, t in scored:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+        if len(out) >= 3:
+            break
+    return out
+
+
 def sector_alert(min_pct=2.5, top=3):
     """板块异动 + 龙头（2026-11-18 用户要求）
 
@@ -1150,6 +1196,9 @@ def sector_alert(min_pct=2.5, top=3):
             line = "%s **%s %+.2f%%** ｜龙头 **%s %s %+.2f%%**（成交 %.1f 亿）" % (
                 arrow, nm, pct, lead.get("f14"), lead.get("f12"),
                 lead.get("f3") or 0, (lead.get("f6") or 0) / 1e8)
+            _th = stock_themes(str(lead.get("f12") or ""))
+            if _th:
+                line += "\n   逻辑：**%s**" % " / ".join(_th)
             if followers:
                 line += "\n   跟风：" + "｜".join("%s %+.1f%%" % (f.get("f14"), f.get("f3") or 0) for f in followers)
             out.append(line)
