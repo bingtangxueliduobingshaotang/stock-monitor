@@ -2754,6 +2754,12 @@ def build_fast():
         for lv in CFG.get("market", {}).get("levels", []):
             key = "fast|mk|%s|%s" % (lv["type"], lv["price"])
             _, fired = level_status(mk["price"], lv)
+            _mp = mk.get("prev")            # 同一天的穿越判定：前收已在同侧就不报
+            if fired and _mp:
+                if lv["type"] == "down" and _mp < lv["price"]:
+                    fired = False
+                if lv["type"] == "up" and _mp >= lv["price"]:
+                    fired = False
             if fired and key not in state["fired"]:
                 state["fired"].append(key)
                 alerts.append("🔴 **上证 %.2f** %s **%.0f** → %s（【%s】）" % (
@@ -2782,7 +2788,7 @@ def build_fast():
                 state["fired"].append(key)
                 alerts.append("🔴 **%s %.3f** %s **%.3f** → %s（【%s】）" % (
                     it["name"], r["price"], "上破" if lv["type"] == "up" else "跌破",
-                    lv["price"], lv["desc"], lv.get("ref", "")))
+                    _px, lv["desc"], lv.get("ref", "")))
             elif not fired and key in state["fired"]:
                 state["fired"].remove(key)      # 回到位内 → 解除，下次可再报
     # 只在真有告警时落盘：state 存在仓库里，每次都写 = 每分钟一个 commit，把历史灌满
