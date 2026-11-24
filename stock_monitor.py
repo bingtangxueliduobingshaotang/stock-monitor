@@ -1308,6 +1308,21 @@ def sector_block(min_pct=2.5):
     return ["", "### 板块异动（%+.1f%% 以上）" % min_pct, ""] + ["- " + r for r in rows] + \
            ["- > 龙头＝涨幅≥5% 里成交额最大的那只（不是涨幅第一）"]
 
+def system_block():
+    """体系篇·各家观点（2026-11-25 用户要求：按汇总的其他人观点推荐）
+
+    数据来自仓库根目录 system_view.md，由我每天学完更新。
+    """
+    p = os.path.join(BASE, "system_view.md")
+    if not os.path.exists(p):
+        return ""
+    try:
+        t = open(p, encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+    return ("\n\n---\n\n" + t) if t else ""
+
+
 def daban_block():
     """打板篇·当日要点（2026-11-25 用户要求：学完及时补进每日推送）
 
@@ -1402,6 +1417,9 @@ def push(title, content):
     if "复盘" in title:
         content += pending_block()
     if "分钟级" not in title:
+        _sy = system_block()
+        if _sy:
+            content += _sy
         _db = daban_block()
         if _db:
             content += _db
