@@ -1308,6 +1308,18 @@ def sector_block(min_pct=2.5):
     return ["", "### 板块异动（%+.1f%% 以上）" % min_pct, ""] + ["- " + r for r in rows] + \
            ["- > 龙头＝涨幅≥5% 里成交额最大的那只（不是涨幅第一）"]
 
+def ref_block():
+    """参考观点·不入体系（九哥谈股论金，2026-11-25 用户定：只收观点）"""
+    p = os.path.join(BASE, "ref_view.md")
+    if not os.path.exists(p):
+        return ""
+    try:
+        t = open(p, encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+    return ("\n\n---\n\n" + t) if t else ""
+
+
 def system_block():
     """体系篇·各家观点（2026-11-25 用户要求：按汇总的其他人观点推荐）
 
@@ -1423,6 +1435,9 @@ def push(title, content):
         _db = daban_block()
         if _db:
             content += _db
+        _rf = ref_block()
+        if _rf:
+            content += _rf
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
                        "template": "markdown"}).encode("utf-8")
