@@ -1308,6 +1308,24 @@ def sector_block(min_pct=2.5):
     return ["", "### 板块异动（%+.1f%% 以上）" % min_pct, ""] + ["- " + r for r in rows] + \
            ["- > 龙头＝涨幅≥5% 里成交额最大的那只（不是涨幅第一）"]
 
+def daban_block():
+    """打板篇·当日要点（2026-11-25 用户要求：学完及时补进每日推送）
+
+    数据来自仓库根目录 daban_view.md，由我每天学完九哥后更新。
+    只在对策/复盘类推送里出现，分钟级告警不带。
+    """
+    p = os.path.join(BASE, "daban_view.md")
+    if not os.path.exists(p):
+        return ""
+    try:
+        t = open(p, encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+    if not t:
+        return ""
+    return "\n\n---\n\n" + t
+
+
 def pending_block():
     """条件跟踪块（2026-11-12 用户要求改版）
 
@@ -1383,6 +1401,10 @@ def push(title, content):
     # 分钟级告警、盘中对策一律不带；告警本身已经说明问题了
     if "复盘" in title:
         content += pending_block()
+    if "分钟级" not in title:
+        _db = daban_block()
+        if _db:
+            content += _db
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
                        "template": "markdown"}).encode("utf-8")
