@@ -1460,13 +1460,13 @@ def push(title, content):
 _STATE_REMOTE = "state/last_alerts.json"
 
 
-def _gh_call(method, data=None):
+def _gh_call(method, data=None, path=None):
     """读写仓库里的 state 文件；没 token（本地跑）返回 None，由调用方回退本地文件"""
     tok = os.environ.get("GH_TOKEN")
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not tok or not repo:
         return None
-    url = "https://api.github.com/repos/%s/contents/%s" % (repo, _STATE_REMOTE)
+    url = "https://api.github.com/repos/%s/contents/%s" % (repo, path or _STATE_REMOTE)
     hdr = {"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json",
            "User-Agent": "stock-monitor", "X-GitHub-Api-Version": "2022-11-28"}
     try:
@@ -3438,5 +3438,13 @@ if __name__ == "__main__":
         import traceback
         err = traceback.format_exc()
         print(err)
+        # 2026-11-25 加：日志对 public 仓库静音后，出错看不到原因。
+        # 这里把 traceback 单独写进 state/last_error.txt，我在本地拉下来看。
+        try:
+            if os.environ.get("GH_TOKEN"):
+                _gh_call("PUT", ("【%s mode=%s】\n%s" % (now, mode, err[-3000:])).encode("utf-8"),
+                         path="state/last_error.txt")
+        except Exception:
+            pass
         push("【系统异常】" + now, "监控脚本出错：\n\n```\n" + err[-800:] + "\n```")
         raise
