@@ -69,8 +69,15 @@ jobs:
           echo "mode=$MODE"
           # 输出静音：本仓库为 public，Actions 日志对所有人可见，
           # 里面含成本价/浮盈亏/仓位，一律不外泄（2026-11-12）
+          # 2026-11-25 加：偶发网络失败自动重试一次（10:30 那次就是单次抖动，
+          # 同一天 14:33/14:49 都推送正常）。重试还失败才算真错，才报警。
           python3 stock_monitor.py "$MODE" > run.log 2>&1 || {
-            echo "::error::运行失败（日志已隐藏，请本地复现：python github_deploy/stock_monitor.py $MODE）";
-            exit 1;
+            echo "第一次失败，30 秒后重试一次";
+            sleep 30;
+            python3 stock_monitor.py "$MODE" > run2.log 2>&1 || {
+              echo "::error::运行失败（日志已隐藏，错误栈已写入 state/last_error.txt）";
+              exit 1;
+            };
+          }
           }
           echo "run ok"
