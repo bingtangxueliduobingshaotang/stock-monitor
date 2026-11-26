@@ -75,7 +75,9 @@ jobs:
             echo "第一次失败，30 秒后重试一次";
             sleep 30;
             python3 stock_monitor.py "$MODE" > run2.log 2>&1 || {
-              echo "::error::运行失败（日志已隐藏，错误栈已写入 state/last_error.txt）";
+              echo "::error::运行失败";
+              # 只输出错误类型和文件行号，数字全部打码（防成本价泄露）
+              tail -c 900 run2.log | sed -E 's/[0-9]+(\.[0-9]+)?/N/g' | head -25;
               exit 1;
             };
           }
