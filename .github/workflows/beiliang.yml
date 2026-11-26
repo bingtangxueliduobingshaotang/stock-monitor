@@ -1,0 +1,46 @@
+name: beiliang
+
+# 倍量选股扫描（2026-11-26 用户要求：每天扫一次，并把入选后 10 个交易日的涨幅记下来）
+# 收盘后 15:35 跑，结果写 beiliang_view.md 并提交
+
+on:
+  schedule:
+    - cron: '35 7 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beiliang
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run scan
+        run: |
+          set +e
+          python3 github_deploy/scan_beiliang.py --cloud --top 150 > scan.log 2>&1
+          RC=$?
+          echo "exit=$RC"
+          if [ "$RC" != "0" ]; then
+            tail -c 800 scan.log | sed -E 's/[0-9]+(\.[0-9]+)?/N/g' | head -20
+          fi
+          test -f beiliang_view.md && echo "view ok"
+
+      - name: Commit
+        run: |
+          git config user.name "beiliang-bot"
+          git config user.email "bot@users.noreply.github.com"
+          mkdir -p state
+          git add beiliang_view.md state/beiliang_track.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no change"
+          else
+            git commit -m "beiliang: $(date -u +%Y-%m-%d)"
+            git push
+          fi
