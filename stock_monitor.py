@@ -1443,19 +1443,6 @@ def push(title, content):
     # 分钟级告警、盘中对策一律不带；告警本身已经说明问题了
     if "复盘" in title:
         content += pending_block()
-    if "分钟级" not in title:
-        _sy = system_block()
-        if _sy:
-            content += _sy
-        _db = daban_block()
-        if _db:
-            content += _db
-        _rf = ref_block()
-        if _rf:
-            content += _rf
-        _bl = beiliang_block()
-        if _bl:
-            content += _bl
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
                        "template": "markdown"}).encode("utf-8")
@@ -1619,6 +1606,16 @@ def build_morning():
     today = datetime.datetime.now(BJ).date().isoformat()
     mk = market_line()
     lines = ["## 今日盯防（开盘前）%s" % today, ""] + ([mk, ""] if mk else [])
+    # 2026-11-27 用户要：早上播一次"昨日观点"（策略池 7 家）
+    _sv = os.path.join(BASE, "system_view.md")
+    if os.path.exists(_sv):
+        try:
+            _t = open(_sv, encoding="utf-8").read().strip()
+            _t = _t.replace("## 📊 体系篇 · 各家观点", "## 📊 昨日观点（策略池）")
+            lines.append(_t)
+            lines.append("")
+        except Exception:
+            pass
     ov = overnight_line()
     if ov:
         lines.append(ov)
