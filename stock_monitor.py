@@ -1308,6 +1308,21 @@ def sector_block(min_pct=2.5):
     return ["", "### 板块异动（%+.1f%% 以上）" % min_pct, ""] + ["- " + r for r in rows] + \
            ["- > 龙头＝涨幅≥5% 里成交额最大的那只（不是涨幅第一）"]
 
+def beiliang_block():
+    """倍量选股（2026-11-26 用户：每天扫一次，结果放进总结）
+
+    数据来自 beiliang_view.md，由 beiliang workflow 每天 15:35 生成并提交。
+    """
+    p = os.path.join(BASE, "beiliang_view.md")
+    if not os.path.exists(p):
+        return ""
+    try:
+        t = open(p, encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+    return ("\n\n---\n\n" + t) if t else ""
+
+
 def ref_block():
     """参考观点·不入体系（九哥谈股论金，2026-11-25 用户定：只收观点）"""
     p = os.path.join(BASE, "ref_view.md")
@@ -1438,6 +1453,9 @@ def push(title, content):
         _rf = ref_block()
         if _rf:
             content += _rf
+        _bl = beiliang_block()
+        if _bl:
+            content += _bl
     content += "\n\n---\n\n📊 本月第 %d 次推送 ｜ PushPlus 免费额度充足" % st["count"]
     body = json.dumps({"token": TOKEN, "title": title, "content": content,
                        "template": "markdown"}).encode("utf-8")
