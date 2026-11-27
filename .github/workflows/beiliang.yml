@@ -24,7 +24,7 @@ jobs:
       - name: Run scan
         run: |
           set +e
-          python3 github_deploy/scan_beiliang.py --cloud --top 150 > scan.log 2>&1
+          python3 github_deploy/scan_beiliang.py --cloud --top 300 > scan.log 2>&1
           RC=$?
           echo "exit=$RC"
           if [ "$RC" != "0" ]; then
