@@ -67,7 +67,7 @@ def candidates(top=300):
                 amt = float(x.get("amount") or 0) / 1e8
             except Exception:
                 amt = 0
-            if amt < 3:          # 成交额太小的不看（堆量至少要 3 亿）
+            if amt < 2:          # 成交额太小的不看（堆量至少要 2 亿）
                 continue
             seen.add(code)
             out.append({"code": code, "sym": sym, "name": nm,
@@ -153,9 +153,9 @@ def check(rows, verbose=False):
     new = amt[i - 9:i + 1]
     N = _median(new)
     L_new = _pct(new, 10)
-    if N / B < 5:
+    if N / B < 4:
         return False, {"why": "抬升不够 %.1fx" % (N / B), "nb": round(N / B, 1), "cv": cv_old}
-    if L_new < B * 3:
+    if L_new < B * 2.5:
         return False, {"why": "有一天掉回去了 %.1fx" % (L_new / B), "nb": round(N / B, 1), "cv": cv_old}
 
     # ③ 区间分离
@@ -167,7 +167,7 @@ def check(rows, verbose=False):
     # ④ 启动日
     launch = None
     for k in range(max(1, i - 14), i + 1):
-        if amt[k] >= 3 * B and amt[k] / max(amt[k - 1], 1e-6) >= 3 and cl[k] > cl[k - 1]:
+        if amt[k] >= 3 * B and amt[k] / max(amt[k - 1], 1e-6) >= 2 and cl[k] > cl[k - 1]:
             m60 = sum(cl[max(0, k - 59):k + 1]) / len(cl[max(0, k - 59):k + 1])
             if cl[k] > m60:
                 launch = k
